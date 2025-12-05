@@ -4,13 +4,14 @@ import { SignalMessage, MessageType, UserState, NotePayload } from '../types';
 
 // !!! IMPORTANT: REPLACE THIS WITH YOUR FIREBASE CONFIGURATION !!!
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  databaseURL: "https://YOUR_PROJECT.firebaseio.com",
-  projectId: "YOUR_PROJECT",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "SENDER_ID",
-  appId: "APP_ID"
+  apiKey: "AIzaSyC8cCm5890Za9qZsm1mGqYOuGTShgO3xfo",
+  authDomain: "mandaloop-6502e.firebaseapp.com",
+  databaseURL: "https://mandaloop-6502e-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "mandaloop-6502e",
+  storageBucket: "mandaloop-6502e.firebasestorage.app",
+  messagingSenderId: "264329265376",
+  appId: "1:264329265376:web:c8505a7e0ef92d6b031085",
+  measurementId: "G-S1YJ5E09XZ"
 };
 
 export class CommsService {
