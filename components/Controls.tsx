@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { Theme } from '../types';
+import { Theme, SynthConfig } from '../types';
 import { generateTheme } from '../services/geminiService';
-import { SCALES } from '../services/audioEngine';
-import { CHORD_MODES } from '../services/audioEngine'; // Changed from '../App'
+import { SCALES, CHORD_MODES } from '../services/audioEngine';
 
 interface ControlsProps {
   userCount: number;
@@ -33,7 +32,8 @@ const Controls: React.FC<ControlsProps> = ({
   setOverrideScale
 }) => {
   const [prompt, setPrompt] = useState('');
-  const [isOpen, setIsOpen] = useState(false); // Closed by default to show mandala
+  const [isOpen, setIsOpen] = useState(false); 
+  const [showSynth, setShowSynth] = useState(false); // Toggle for advanced controls
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,12 +43,24 @@ const Controls: React.FC<ControlsProps> = ({
     try {
       const newTheme = await generateTheme(finalPrompt, roomCode);
       onThemeChange(newTheme);
+      setShowSynth(true); // Auto-open controls so they can see what happened
     } catch (err) {
       console.error(err);
     } finally {
       setIsGenerating(false);
       if (prompt) setPrompt('');
     }
+  };
+
+  const handleSynthChange = (key: keyof SynthConfig, value: number) => {
+      const updatedTheme = {
+          ...currentTheme,
+          synthConfig: {
+              ...currentTheme.synthConfig,
+              [key]: value
+          }
+      };
+      onThemeChange(updatedTheme);
   };
 
   if (!isOpen) {
@@ -71,7 +83,6 @@ const Controls: React.FC<ControlsProps> = ({
         </button>
       </div>
 
-      {/* Room Info */}
       <div className="mb-6 pb-4 border-b border-white/10">
         <div className="flex justify-between items-center text-white/70 mb-1">
             <span className="text-xs uppercase tracking-wider">Connected Room</span>
@@ -81,11 +92,9 @@ const Controls: React.FC<ControlsProps> = ({
         <div className="text-[10px] text-white/50 mt-1">Users in room: {userCount}</div>
       </div>
 
-      {/* Manual Instrument Controls */}
       <div className="mb-6 pb-4 border-b border-white/10 space-y-4">
          <h3 className="text-xs uppercase tracking-wider text-white/50">Instrument Config</h3>
          
-         {/* Chord Selector */}
          <div>
             <label className="block text-[10px] text-white/70 mb-1">CHORD MODE</label>
             <select 
@@ -99,7 +108,6 @@ const Controls: React.FC<ControlsProps> = ({
             </select>
          </div>
 
-         {/* Scale Selector */}
          <div>
             <label className="block text-[10px] text-white/70 mb-1">SCALE OVERRIDE</label>
             <select 
@@ -115,7 +123,6 @@ const Controls: React.FC<ControlsProps> = ({
          </div>
       </div>
 
-      {/* Theme Gen */}
       <div className="mb-6">
         <label className="block text-white/50 mb-2 text-xs uppercase tracking-wider">Generate New Vibe</label>
         <form onSubmit={handleGenerate} className="flex gap-2">
@@ -139,14 +146,83 @@ const Controls: React.FC<ControlsProps> = ({
             </button>
         </form>
       </div>
+
+      {/* NEW: Collapsible Synth Controls */}
+      <div className="mb-4">
+         <button 
+            onClick={() => setShowSynth(!showSynth)}
+            className="w-full flex justify-between items-center text-xs uppercase tracking-wider text-white/50 hover:text-white transition-colors"
+         >
+             <span>Fine Tune Sound</span>
+             <span>{showSynth ? '−' : '+'}</span>
+         </button>
+         
+         {showSynth && (
+             <div className="mt-4 space-y-4 p-4 bg-black/40 rounded border border-white/5">
+                 {/* Attack / Release */}
+                 <div className="space-y-3">
+                     <div>
+                         <div className="flex justify-between text-[10px] text-white/70 mb-1">
+                             <span>ATTACK</span>
+                             <span>{currentTheme.synthConfig.attack}s</span>
+                         </div>
+                         <input 
+                             type="range" min="0.01" max="2.0" step="0.01"
+                             value={currentTheme.synthConfig.attack}
+                             onChange={(e) => handleSynthChange('attack', parseFloat(e.target.value))}
+                             className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                         />
+                     </div>
+                     <div>
+                         <div className="flex justify-between text-[10px] text-white/70 mb-1">
+                             <span>RELEASE</span>
+                             <span>{currentTheme.synthConfig.release}s</span>
+                         </div>
+                         <input 
+                             type="range" min="0.1" max="5.0" step="0.1"
+                             value={currentTheme.synthConfig.release}
+                             onChange={(e) => handleSynthChange('release', parseFloat(e.target.value))}
+                             className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                         />
+                     </div>
+                 </div>
+
+                 {/* Filter */}
+                 <div>
+                     <div className="flex justify-between text-[10px] text-white/70 mb-1">
+                         <span>BRIGHTNESS (FILTER)</span>
+                         <span>{currentTheme.synthConfig.filterFreq}Hz</span>
+                     </div>
+                     <input 
+                         type="range" min="200" max="5000" step="50"
+                         value={currentTheme.synthConfig.filterFreq}
+                         onChange={(e) => handleSynthChange('filterFreq', parseFloat(e.target.value))}
+                         className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                     />
+                 </div>
+
+                 {/* Vibrato */}
+                 <div>
+                     <div className="flex justify-between text-[10px] text-white/70 mb-1">
+                         <span>WOBBLE (VIBRATO)</span>
+                         <span>{currentTheme.synthConfig.vibratoDepth}</span>
+                     </div>
+                     <input 
+                         type="range" min="0" max="30" step="1"
+                         value={currentTheme.synthConfig.vibratoDepth}
+                         onChange={(e) => handleSynthChange('vibratoDepth', parseFloat(e.target.value))}
+                         className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                     />
+                 </div>
+             </div>
+         )}
+      </div>
       
-      {/* Theme Info */}
       <div className="mt-4 p-4 bg-white/5 rounded border border-white/5">
            <div className="text-white font-medium mb-1">{currentTheme.name}</div>
            <div className="text-xs text-white/60 italic leading-relaxed">{currentTheme.moodDescription}</div>
-           <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] text-white/50 font-mono uppercase">
-               <div>Base Scale: {currentTheme.scale.replace('_', ' ')}</div>
-               <div>Filter: {currentTheme.synthConfig.filterFreq}hz</div>
+           <div className="mt-3 text-[10px] text-white/50 font-mono uppercase">
+               Scale: {currentTheme.scale.replace('_', ' ')}
            </div>
       </div>
     </div>
