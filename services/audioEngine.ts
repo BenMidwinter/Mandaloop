@@ -256,8 +256,19 @@ export class AudioEngine {
         case 'vibrato':
             this.activeVoices.forEach(v => v.setVibrato(active));
             break;
+
+        
     }
   }
 }
 
 export const audioEngine = new AudioEngine();
+
+export const CHORD_MODES: Record<string, number[]> = {
+    'Single': [0],
+    'Octaves': [0, 7], 
+    'Triad (1-3-5)': [0, 2, 4], 
+    'Sus4 (1-4-5)': [0, 3, 4],
+    'Open 5th (1-5)': [0, 4],
+    'Cluster (1-2)': [0, 1]
+};
