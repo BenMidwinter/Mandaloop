@@ -1,9 +1,6 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { Theme } from "../types";
 
-// NOTE: in vite.config.ts we mapped process.env.API_KEY to the import.meta.env.API_KEY logic
-// If this still fails, we might need to use import.meta.env.VITE_API_KEY directly, 
-// but for now let's stick to the structure that worked for the build previously.
 const genAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const themeSchema: Schema = {
@@ -50,7 +47,8 @@ const themeSchema: Schema = {
 
 export const generateTheme = async (prompt: string, seed?: string): Promise<Theme> => {
   try {
-    const modelId = "gemini-1.5-flash"; 
+    // FIXED: Reverted to the correct stable model for late 2025
+    const modelId = "gemini-2.5-flash"; 
     
     const seedInstruction = seed ? ` Use the seed word "${seed}" to strictly determine the style.` : "";
 
@@ -64,15 +62,17 @@ export const generateTheme = async (prompt: string, seed?: string): Promise<Them
       }
     });
 
-    // FIXED: Access .text as a property, not a function .text()
-    // We also use 'msg' or 'content' depending on the exact SDK response shape, 
-    // but typically .text is the getter helper.
+    // FIXED: Correctly handle the text property which might be null/undefined in the type definition
     const responseText = result.text;
 
-    if (!responseText) throw new Error("No response text from Gemini");
+    if (!responseText) {
+      console.warn("Gemini response was empty:", result);
+      throw new Error("No response text from Gemini");
+    }
     
     return JSON.parse(responseText) as Theme;
   } catch (error) {
+    // This log is crucial - if it fails again, check the Console for the specific error code
     console.error("Gemini Theme Error Details:", error);
     
     return {
