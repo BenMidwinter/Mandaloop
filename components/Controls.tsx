@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Theme } from '../types';
 import { generateTheme } from '../services/geminiService';
 import { SCALES } from '../services/audioEngine';
-import { CHORD_MODES } from '../App';
+import { CHORD_MODES } from '../services/audioEngine'; // Changed from '../App'
 
 interface ControlsProps {
   userCount: number;
