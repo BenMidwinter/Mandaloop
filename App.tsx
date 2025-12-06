@@ -50,6 +50,9 @@ const App: React.FC = () => {
   
   const localIdRef = useRef<string | null>(null);
   
+  // NEW: A Ref to hold the latest version of the message handler
+  const messageHandlerRef = useRef<(msg: SignalMessage) => void>(() => {});
+
   const [activeChordMode, setActiveChordMode] = useState<string>('Single');
   const [overrideScale, setOverrideScale] = useState<string>('');
 
@@ -60,6 +63,8 @@ const App: React.FC = () => {
     if (localUser) localIdRef.current = localUser.id;
   }, [localUser]);
 
+  // This function gets recreated whenever state (theme/users) changes.
+  // It effectively captures the "Present Moment"
   const handleRemoteMessage = useCallback((msg: SignalMessage) => {
     if (localIdRef.current && msg.senderId === localIdRef.current) return;
 
@@ -87,6 +92,7 @@ const App: React.FC = () => {
         const { noteIndex } = msg.payload as NotePayload;
         
         // Find the remote user to get their active effects
+        // Because this function is FRESH, it sees the current remoteUsers list
         const sender = remoteUsers.find(u => u.id === msg.senderId);
         const senderEffects = sender ? sender.activeEffects : [];
 
@@ -98,8 +104,9 @@ const App: React.FC = () => {
           return u;
         }));
         
+        // Because this function is FRESH, effectiveScale is the current synced scale
         const freq = audioEngine.getFreq(theme.baseFreq, effectiveScale, noteIndex);
-        // PASS REMOTE EFFECTS HERE
+        
         audioEngine.noteOn(msg.senderId, noteIndex, freq, theme.synthConfig, senderEffects);
         break;
       }
@@ -132,22 +139,25 @@ const App: React.FC = () => {
             return u;
         }));
         
-        // Update audio engine live for this remote user
         audioEngine.updateUserEffects(msg.senderId, updatedEffects);
         break;
       }
 
       case 'SYNC_THEME': 
         setTheme(msg.payload);
-        setOverrideScale(''); // Reset override when theme changes
+        setOverrideScale(''); 
         break;
 
-      // NEW: Sync Scale globally
       case 'SYNC_SCALE':
         setOverrideScale(msg.payload);
         break;
     }
-  }, [theme, effectiveScale, remoteUsers]);
+  }, [theme, effectiveScale, remoteUsers]); // Re-create when these change
+
+  // NEW: Keep the Ref updated with the latest handler logic
+  useEffect(() => {
+    messageHandlerRef.current = handleRemoteMessage;
+  }, [handleRemoteMessage]);
 
   const joinRoom = (name: string, code: string) => {
     const newUser: UserState = {
@@ -165,7 +175,14 @@ const App: React.FC = () => {
     
     audioEngine.init();
 
-    comms.connect(code, handleRemoteMessage);
+    // FIXED: Connect using a stable wrapper that calls the Ref
+    // This allows the logic to swap out behind the scenes without disconnecting
+    comms.connect(code, (msg) => {
+        if (messageHandlerRef.current) {
+            messageHandlerRef.current(msg);
+        }
+    });
+
     setTimeout(() => {
         comms.send('JOIN', newUser, newUser.id);
     }, 500);
@@ -199,6 +216,7 @@ const App: React.FC = () => {
             });
 
             const freq = audioEngine.getFreq(theme.baseFreq, effectiveScale, noteIndex);
+            
             // Pass local effects
             audioEngine.noteOn(localUser.id, noteIndex, freq, theme.synthConfig, localUser.activeEffects);
 
@@ -234,7 +252,6 @@ const App: React.FC = () => {
                 comms.send('EFFECT_CHANGE', { effect, active: true }, localUser.id);
             }
         }
-        // Update local audio engine live
         audioEngine.updateUserEffects(localUser.id, newEffects);
       }
     };
@@ -293,7 +310,6 @@ const App: React.FC = () => {
     }
   };
   
-  // NEW: Handle scale broadcast
   const handleScaleChange = (newScale: string) => {
       setOverrideScale(newScale);
       if (localUser) {
@@ -324,9 +340,10 @@ const App: React.FC = () => {
         activeChordMode={activeChordMode}
         setActiveChordMode={setActiveChordMode}
         overrideScale={overrideScale}
-        setOverrideScale={handleScaleChange} // Pass the broadcast handler
+        setOverrideScale={handleScaleChange} 
       />
 
+      {/* Footer / Key Guide - Same as before */}
       <div className="absolute bottom-6 left-0 right-0 flex justify-center pointer-events-none">
          <div className="flex gap-8 items-center bg-black/40 backdrop-blur px-6 py-2 rounded-full border border-white/5">
              <div className="flex gap-4 items-center border-r border-white/10 pr-6">
