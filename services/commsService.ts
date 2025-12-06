@@ -136,5 +136,6 @@ export class CommsService {
     };
     push(this.eventsRef, msg);
   }
+}
 
 export const comms = new CommsService();
