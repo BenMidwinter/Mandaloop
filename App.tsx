@@ -48,7 +48,6 @@ const App: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [roomCode, setRoomCode] = useState('');
   
-  // Ref to track local ID immediately (fixes the "Ghost User" bug)
   const localIdRef = useRef<string | null>(null);
   
   const [activeChordMode, setActiveChordMode] = useState<string>('Single');
@@ -57,13 +56,11 @@ const App: React.FC = () => {
   const allUsers = localUser ? [localUser, ...remoteUsers] : [];
   const effectiveScale = overrideScale || theme.scale;
 
-  // Keep ref in sync
   useEffect(() => {
     if (localUser) localIdRef.current = localUser.id;
   }, [localUser]);
 
   const handleRemoteMessage = useCallback((msg: SignalMessage) => {
-    // Robust check against own messages using Ref
     if (localIdRef.current && msg.senderId === localIdRef.current) return;
 
     switch (msg.type) {
@@ -82,13 +79,17 @@ const App: React.FC = () => {
         });
         break;
 
-      case 'LEAVE': // Handle user disconnect
+      case 'LEAVE': 
         setRemoteUsers(prev => prev.filter(u => u.id !== msg.senderId));
         break;
         
       case 'NOTE_ON': {
         const { noteIndex } = msg.payload as NotePayload;
         
+        // Find the remote user to get their active effects
+        const sender = remoteUsers.find(u => u.id === msg.senderId);
+        const senderEffects = sender ? sender.activeEffects : [];
+
         setRemoteUsers(prev => prev.map(u => {
           const currentNotes = u.activeNotes || [];
           if (u.id === msg.senderId && !currentNotes.includes(noteIndex)) {
@@ -98,7 +99,8 @@ const App: React.FC = () => {
         }));
         
         const freq = audioEngine.getFreq(theme.baseFreq, effectiveScale, noteIndex);
-        audioEngine.noteOn(msg.senderId, noteIndex, freq, theme.synthConfig);
+        // PASS REMOTE EFFECTS HERE
+        audioEngine.noteOn(msg.senderId, noteIndex, freq, theme.synthConfig, senderEffects);
         break;
       }
       
@@ -117,24 +119,35 @@ const App: React.FC = () => {
 
       case 'EFFECT_CHANGE': {
         const { effect, active } = msg.payload;
+        let updatedEffects: string[] = [];
+
         setRemoteUsers(prev => prev.map(u => {
             if (u.id === msg.senderId) {
                 const currentEffects = u.activeEffects || [];
-                const effects = active 
+                updatedEffects = active 
                     ? [...currentEffects, effect]
                     : currentEffects.filter(e => e !== effect);
-                return { ...u, activeEffects: effects };
+                return { ...u, activeEffects: updatedEffects };
             }
             return u;
         }));
+        
+        // Update audio engine live for this remote user
+        audioEngine.updateUserEffects(msg.senderId, updatedEffects);
         break;
       }
 
       case 'SYNC_THEME': 
         setTheme(msg.payload);
+        setOverrideScale(''); // Reset override when theme changes
+        break;
+
+      // NEW: Sync Scale globally
+      case 'SYNC_SCALE':
+        setOverrideScale(msg.payload);
         break;
     }
-  }, [theme, effectiveScale]);
+  }, [theme, effectiveScale, remoteUsers]);
 
   const joinRoom = (name: string, code: string) => {
     const newUser: UserState = {
@@ -146,7 +159,7 @@ const App: React.FC = () => {
     };
     
     setLocalUser(newUser);
-    localIdRef.current = newUser.id; // Set ref immediately before connecting
+    localIdRef.current = newUser.id;
     setRoomCode(code);
     setIsInLobby(false);
     
@@ -186,7 +199,8 @@ const App: React.FC = () => {
             });
 
             const freq = audioEngine.getFreq(theme.baseFreq, effectiveScale, noteIndex);
-            audioEngine.noteOn(localUser.id, noteIndex, freq, theme.synthConfig);
+            // Pass local effects
+            audioEngine.noteOn(localUser.id, noteIndex, freq, theme.synthConfig, localUser.activeEffects);
 
             const notePayload: NotePayload = {
               noteIndex,
@@ -200,34 +214,28 @@ const App: React.FC = () => {
 
       if (EFFECT_KEYS.hasOwnProperty(key)) {
         const effect = EFFECT_KEYS[key];
-        
+        let newEffects = localUser.activeEffects;
+
         if (effect === 'reverb_max') {
-            const isActive = (localUser.activeEffects || []).includes('reverb_max');
+            const isActive = localUser.activeEffects.includes('reverb_max');
             const newState = !isActive;
             
-            setLocalUser(prev => {
-                if (!prev) return prev;
-                const currentEffects = prev.activeEffects || [];
-                const effects = newState 
-                    ? [...currentEffects, effect]
-                    : currentEffects.filter(e => e !== effect);
-                return { ...prev, activeEffects: effects };
-            });
-            
-            audioEngine.setEffect(effect, newState);
+            newEffects = newState 
+                ? [...localUser.activeEffects, effect]
+                : localUser.activeEffects.filter(e => e !== effect);
+                
+            setLocalUser({ ...localUser, activeEffects: newEffects });
             comms.send('EFFECT_CHANGE', { effect, active: newState }, localUser.id);
         } 
         else {
-            setLocalUser(prev => {
-                if (!prev) return prev;
-                const currentEffects = prev.activeEffects || [];
-                if (currentEffects.includes(effect)) return prev;
-                return { ...prev, activeEffects: [...currentEffects, effect] };
-            });
-
-            audioEngine.setEffect(effect, true);
-            comms.send('EFFECT_CHANGE', { effect, active: true }, localUser.id);
+            if (!localUser.activeEffects.includes(effect)) {
+                newEffects = [...localUser.activeEffects, effect];
+                setLocalUser({ ...localUser, activeEffects: newEffects });
+                comms.send('EFFECT_CHANGE', { effect, active: true }, localUser.id);
+            }
         }
+        // Update local audio engine live
+        audioEngine.updateUserEffects(localUser.id, newEffects);
       }
     };
 
@@ -256,13 +264,13 @@ const App: React.FC = () => {
             const effect = EFFECT_KEYS[key];
             if (effect === 'reverb_max') return; 
 
+            const newEffects = localUser.activeEffects.filter(eff => eff !== effect);
             setLocalUser(prev => {
                 if (!prev) return prev;
-                const currentEffects = prev.activeEffects || [];
-                return { ...prev, activeEffects: currentEffects.filter(eff => eff !== effect) };
+                return { ...prev, activeEffects: newEffects };
             });
 
-            audioEngine.setEffect(effect, false);
+            audioEngine.updateUserEffects(localUser.id, newEffects);
             comms.send('EFFECT_CHANGE', { effect, active: false }, localUser.id);
         }
     };
@@ -283,6 +291,14 @@ const App: React.FC = () => {
     if (localUser) {
         comms.send('SYNC_THEME', newTheme, localUser.id);
     }
+  };
+  
+  // NEW: Handle scale broadcast
+  const handleScaleChange = (newScale: string) => {
+      setOverrideScale(newScale);
+      if (localUser) {
+          comms.send('SYNC_SCALE', newScale, localUser.id);
+      }
   };
 
   if (isInLobby) {
@@ -308,7 +324,7 @@ const App: React.FC = () => {
         activeChordMode={activeChordMode}
         setActiveChordMode={setActiveChordMode}
         overrideScale={overrideScale}
-        setOverrideScale={setOverrideScale}
+        setOverrideScale={handleScaleChange} // Pass the broadcast handler
       />
 
       <div className="absolute bottom-6 left-0 right-0 flex justify-center pointer-events-none">
