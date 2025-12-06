@@ -1,3 +1,4 @@
+// ... (Keep Imports and Constants SCALES / CHORD_MODES exactly as they are) ...
 import { SynthConfig } from '../types';
 
 export const SCALES: Record<string, number[]> = {
@@ -27,14 +28,15 @@ export const CHORD_MODES: Record<string, number[]> = {
 };
 
 class Voice {
+  // ... (Keep properties exactly as they are) ...
   public osc1: OscillatorNode;
   public osc2: OscillatorNode;
-  public filter: BiquadFilterNode; // Per-voice filter
-  public distortion: WaveShaperNode; // Per-voice distortion
+  public filter: BiquadFilterNode;
+  public distortion: WaveShaperNode;
   public amp: GainNode;
   public lfo: OscillatorNode;
   public lfoGain: GainNode;
-  public reverbSend: GainNode; // Per-voice reverb send
+  public reverbSend: GainNode;
   
   private ctx: AudioContext;
   private config: SynthConfig;
@@ -42,10 +44,10 @@ class Voice {
   constructor(
     ctx: AudioContext, 
     destination: AudioNode, 
-    reverbDestination: AudioNode, // We pass the global reverb input here
+    reverbDestination: AudioNode,
     freq: number, 
     config: SynthConfig,
-    activeEffects: string[] // We pass the specific user's effects
+    activeEffects: string[]
   ) {
     this.ctx = ctx;
     this.config = config;
@@ -65,19 +67,22 @@ class Voice {
     this.lfo = ctx.createOscillator();
     this.lfo.frequency.value = config.vibratoSpeed;
     this.lfoGain = ctx.createGain();
-    this.lfoGain.gain.value = activeEffects.includes('vibrato') ? config.vibratoDepth * 5 : 0;
+    
+    // START GENTLE: If vibrato is on, start at 0 and ramp up (The Cello Swell)
+    this.lfoGain.gain.setValueAtTime(0, t);
+    if (activeEffects.includes('vibrato')) {
+        this.lfoGain.gain.setTargetAtTime(config.vibratoDepth * 5, t, 0.6); // 0.6s Fade In
+    }
+    
     this.lfo.connect(this.lfoGain);
     this.lfoGain.connect(this.osc1.frequency);
     this.lfoGain.connect(this.osc2.frequency);
     this.lfo.start(t);
 
-    // --- PER-VOICE EFFECTS CHAIN ---
-    
-    // 1. Filter
+    // --- FILTER ---
     this.filter = ctx.createBiquadFilter();
     this.filter.type = 'lowpass';
     this.filter.Q.value = config.filterQ;
-    // Apply "Filter Close" effect immediately if active
     const targetFreq = activeEffects.includes('filter_close') ? 400 : config.filterFreq;
     
     this.filter.frequency.setValueAtTime(targetFreq, t);
@@ -85,35 +90,29 @@ class Voice {
         this.filter.frequency.exponentialRampToValueAtTime(targetFreq * 0.5, t + config.decay);
     }
 
-    // 2. Distortion
+    // --- DISTORTION ---
     this.distortion = ctx.createWaveShaper();
-    // Use a simple curve. If effect is off, we use a linear curve (no change), if on, we distort.
     this.distortion.curve = activeEffects.includes('distort') ? this.makeDistortionCurve(50) : null;
     this.distortion.oversample = '4x';
 
-    // 3. Amp Envelope
+    // --- AMP ---
     this.amp = ctx.createGain();
     this.amp.gain.setValueAtTime(0, t);
     this.amp.gain.linearRampToValueAtTime(0.5, t + config.attack); 
     this.amp.gain.exponentialRampToValueAtTime(config.sustain * 0.5, t + config.attack + config.decay);
 
-    // 4. Reverb Send
+    // --- REVERB SEND ---
     this.reverbSend = ctx.createGain();
     this.reverbSend.gain.value = activeEffects.includes('reverb_max') ? 0.8 : 0.0;
 
     // --- ROUTING ---
-    // Osc -> Filter -> Distortion -> Amp -> Destination (Dry)
-    //                                    -> ReverbSend (Wet)
-    
     this.osc1.connect(this.filter);
     this.osc2.connect(this.filter);
-    
     this.filter.connect(this.distortion);
     this.distortion.connect(this.amp);
-    
-    this.amp.connect(destination); // Dry out
-    this.amp.connect(this.reverbSend); // Split signal
-    this.reverbSend.connect(reverbDestination); // To global reverb
+    this.amp.connect(destination); 
+    this.amp.connect(this.reverbSend); 
+    this.reverbSend.connect(reverbDestination); 
 
     this.osc1.start(t);
     this.osc2.start(t);
@@ -130,22 +129,18 @@ class Voice {
     return curve;
   }
 
-  // Update effects live while note is playing
   public updateEffects(activeEffects: string[]) {
       const t = this.ctx.currentTime;
       
-      // Filter
       const targetFreq = activeEffects.includes('filter_close') ? 400 : this.config.filterFreq;
       this.filter.frequency.setTargetAtTime(targetFreq, t, 0.1);
 
-      // Distortion
       this.distortion.curve = activeEffects.includes('distort') ? this.makeDistortionCurve(50) : null;
 
-      // Reverb
       this.reverbSend.gain.setTargetAtTime(activeEffects.includes('reverb_max') ? 0.8 : 0.0, t, 0.5);
 
-      // Vibrato
-      this.lfoGain.gain.setTargetAtTime(activeEffects.includes('vibrato') ? this.config.vibratoDepth * 5 : 0, t, 0.1);
+      // FIXED: Slower ramp for Cello-like vibrato (0.6s)
+      this.lfoGain.gain.setTargetAtTime(activeEffects.includes('vibrato') ? this.config.vibratoDepth * 5 : 0, t, 0.6);
   }
 
   public release() {
@@ -179,7 +174,6 @@ export class AudioEngine {
   private compressor: DynamicsCompressorNode | null = null;
   private reverbNode: ConvolverNode | null = null;
   
-  // Map<"userId_noteIndex", Voice>
   private activeVoices: Map<string, Voice> = new Map();
 
   public init() {
@@ -191,14 +185,9 @@ export class AudioEngine {
 
     this.compressor = this.ctx.createDynamicsCompressor();
     
-    // Reverb (Global Bus)
     this.reverbNode = this.ctx.createConvolver();
     this.createImpulse(3, 2);
 
-    // Master Chain
-    // Voices connect to Compressor (Dry) AND ReverbNode (Wet)
-    // ReverbNode connects to Compressor
-    
     this.reverbNode.connect(this.compressor);
     this.compressor.connect(this.masterGain);
     this.masterGain.connect(this.ctx.destination);
@@ -229,7 +218,6 @@ export class AudioEngine {
     return base * Math.pow(2, semitones / 12);
   }
 
-  // NOTE: Now accepts activeEffects array!
   public noteOn(userId: string, noteIndex: number, freq: number, config: SynthConfig, activeEffects: string[]) {
     if (!this.ctx) this.init();
     if (!this.ctx) return;
@@ -240,7 +228,6 @@ export class AudioEngine {
         this.noteOff(userId, noteIndex);
     }
 
-    // Connect to Compressor (Dry) and Reverb (Wet input)
     const voice = new Voice(this.ctx, this.compressor!, this.reverbNode!, freq, config, activeEffects);
     this.activeVoices.set(id, voice);
   }
@@ -254,7 +241,6 @@ export class AudioEngine {
     }
   }
 
-  // NOTE: Now updates specific user voices!
   public updateUserEffects(userId: string, activeEffects: string[]) {
     if (!this.ctx) return;
     
