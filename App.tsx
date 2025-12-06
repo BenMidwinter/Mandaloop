@@ -49,8 +49,6 @@ const App: React.FC = () => {
   const [roomCode, setRoomCode] = useState('');
   
   const localIdRef = useRef<string | null>(null);
-  
-  // NEW: A Ref to hold the latest version of the message handler
   const messageHandlerRef = useRef<(msg: SignalMessage) => void>(() => {});
 
   const [activeChordMode, setActiveChordMode] = useState<string>('Single');
@@ -63,8 +61,6 @@ const App: React.FC = () => {
     if (localUser) localIdRef.current = localUser.id;
   }, [localUser]);
 
-  // This function gets recreated whenever state (theme/users) changes.
-  // It effectively captures the "Present Moment"
   const handleRemoteMessage = useCallback((msg: SignalMessage) => {
     if (localIdRef.current && msg.senderId === localIdRef.current) return;
 
@@ -91,8 +87,6 @@ const App: React.FC = () => {
       case 'NOTE_ON': {
         const { noteIndex } = msg.payload as NotePayload;
         
-        // Find the remote user to get their active effects
-        // Because this function is FRESH, it sees the current remoteUsers list
         const sender = remoteUsers.find(u => u.id === msg.senderId);
         const senderEffects = sender ? sender.activeEffects : [];
 
@@ -104,9 +98,7 @@ const App: React.FC = () => {
           return u;
         }));
         
-        // Because this function is FRESH, effectiveScale is the current synced scale
         const freq = audioEngine.getFreq(theme.baseFreq, effectiveScale, noteIndex);
-        
         audioEngine.noteOn(msg.senderId, noteIndex, freq, theme.synthConfig, senderEffects);
         break;
       }
@@ -152,16 +144,23 @@ const App: React.FC = () => {
         setOverrideScale(msg.payload);
         break;
     }
-  }, [theme, effectiveScale, remoteUsers]); // Re-create when these change
+  }, [theme, effectiveScale, remoteUsers]);
 
-  // NEW: Keep the Ref updated with the latest handler logic
   useEffect(() => {
     messageHandlerRef.current = handleRemoteMessage;
   }, [handleRemoteMessage]);
 
   const joinRoom = (name: string, code: string) => {
+    // FIXED: Session Persistence (The Anti-Ghost Fix)
+    // Check if we already have an ID for this session
+    let existingId = sessionStorage.getItem('mandaloop_userId');
+    if (!existingId) {
+        existingId = Math.random().toString(36).substr(2, 9);
+        sessionStorage.setItem('mandaloop_userId', existingId);
+    }
+
     const newUser: UserState = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: existingId, // Reuse ID so we overwrite our old ghost self
       name: name,
       colorIndex: Math.floor(Math.random() * 5),
       activeNotes: [],
@@ -175,8 +174,6 @@ const App: React.FC = () => {
     
     audioEngine.init();
 
-    // FIXED: Connect using a stable wrapper that calls the Ref
-    // This allows the logic to swap out behind the scenes without disconnecting
     comms.connect(code, (msg) => {
         if (messageHandlerRef.current) {
             messageHandlerRef.current(msg);
@@ -217,7 +214,6 @@ const App: React.FC = () => {
 
             const freq = audioEngine.getFreq(theme.baseFreq, effectiveScale, noteIndex);
             
-            // Pass local effects
             audioEngine.noteOn(localUser.id, noteIndex, freq, theme.synthConfig, localUser.activeEffects);
 
             const notePayload: NotePayload = {
@@ -343,7 +339,7 @@ const App: React.FC = () => {
         setOverrideScale={handleScaleChange} 
       />
 
-      {/* Footer / Key Guide - Same as before */}
+      {/* Footer / Key Guide */}
       <div className="absolute bottom-6 left-0 right-0 flex justify-center pointer-events-none">
          <div className="flex gap-8 items-center bg-black/40 backdrop-blur px-6 py-2 rounded-full border border-white/5">
              <div className="flex gap-4 items-center border-r border-white/10 pr-6">
