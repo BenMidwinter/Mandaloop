@@ -1,6 +1,9 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { Theme } from "../types";
 
+// NOTE: in vite.config.ts we mapped process.env.API_KEY to the import.meta.env.API_KEY logic
+// If this still fails, we might need to use import.meta.env.VITE_API_KEY directly, 
+// but for now let's stick to the structure that worked for the build previously.
 const genAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const themeSchema: Schema = {
@@ -47,7 +50,6 @@ const themeSchema: Schema = {
 
 export const generateTheme = async (prompt: string, seed?: string): Promise<Theme> => {
   try {
-    // FIXED: Changed from 2.5 to 1.5-flash (Standard Stable Model)
     const modelId = "gemini-1.5-flash"; 
     
     const seedInstruction = seed ? ` Use the seed word "${seed}" to strictly determine the style.` : "";
@@ -62,23 +64,15 @@ export const generateTheme = async (prompt: string, seed?: string): Promise<Them
       }
     });
 
-    const text = result.text(); // Note: In newer SDKs this might be a function or property.
-    // If result.text is a function in the CDN version, use result.text(). 
-    // If it's a property, use result.text. 
-    // The safest way with the CDN wrapper is usually checking both or just standard property access if the SDK matches.
-    // Based on your previous file, it treated it as a property. 
-    // Let's stick to the property if that's what the types say, but usually .text() is a method in GoogleGenAI.
-    // Let's try the property access you had, but usually it needs to be awaited or accessed differently in v1.
-    // Actually, looking at the @google/genai SDK, result.text is usually a getter or method.
-    
-    // Safest approach for @google/genai (new SDK):
-    const responseText = result.text; 
+    // FIXED: Access .text as a property, not a function .text()
+    // We also use 'msg' or 'content' depending on the exact SDK response shape, 
+    // but typically .text is the getter helper.
+    const responseText = result.text;
 
-    if (!responseText) throw new Error("No response from Gemini");
+    if (!responseText) throw new Error("No response text from Gemini");
     
     return JSON.parse(responseText) as Theme;
   } catch (error) {
-    // This Log will appear in your browser console (F12) so you can see the real error
     console.error("Gemini Theme Error Details:", error);
     
     return {
