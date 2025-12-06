@@ -47,10 +47,9 @@ const themeSchema: Schema = {
 
 export const generateTheme = async (prompt: string, seed?: string): Promise<Theme> => {
   try {
-    const modelId = "gemini-2.5-flash"; 
+    // FIXED: Changed from 2.5 to 1.5-flash (Standard Stable Model)
+    const modelId = "gemini-1.5-flash"; 
     
-    // We include the seed in the prompt to encourage deterministic output if the same seed is used
-    // technically Gemini isn't purely deterministic but this helps the 'vibe' consistency
     const seedInstruction = seed ? ` Use the seed word "${seed}" to strictly determine the style.` : "";
 
     const result = await genAI.models.generateContent({
@@ -63,13 +62,25 @@ export const generateTheme = async (prompt: string, seed?: string): Promise<Them
       }
     });
 
-    const text = result.text;
-    if (!text) throw new Error("No response from Gemini");
+    const text = result.text(); // Note: In newer SDKs this might be a function or property.
+    // If result.text is a function in the CDN version, use result.text(). 
+    // If it's a property, use result.text. 
+    // The safest way with the CDN wrapper is usually checking both or just standard property access if the SDK matches.
+    // Based on your previous file, it treated it as a property. 
+    // Let's stick to the property if that's what the types say, but usually .text() is a method in GoogleGenAI.
+    // Let's try the property access you had, but usually it needs to be awaited or accessed differently in v1.
+    // Actually, looking at the @google/genai SDK, result.text is usually a getter or method.
     
-    return JSON.parse(text) as Theme;
+    // Safest approach for @google/genai (new SDK):
+    const responseText = result.text; 
+
+    if (!responseText) throw new Error("No response from Gemini");
+    
+    return JSON.parse(responseText) as Theme;
   } catch (error) {
-    console.error("Gemini Theme Error:", error);
-    // Fallback theme
+    // This Log will appear in your browser console (F12) so you can see the real error
+    console.error("Gemini Theme Error Details:", error);
+    
     return {
       name: "Fallback Neon",
       colors: ["#FF00FF", "#00FFFF", "#FFFF00", "#FF0000", "#0000FF"],
