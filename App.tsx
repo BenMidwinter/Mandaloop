@@ -86,32 +86,33 @@ const App: React.FC = () => {
       case 'JOIN':
         setRemoteUsers(prev => {
           if (prev.find(u => u.id === msg.senderId)) return prev;
-          return [...prev, msg.payload];
+          // Firebase might strip empty arrays, restore them
+          const rawUser = msg.payload as Partial<UserState>;
+          const sanitizedUser: UserState = {
+              id: rawUser.id || 'unknown',
+              name: rawUser.name || 'Anonymous',
+              colorIndex: rawUser.colorIndex || 0,
+              activeNotes: rawUser.activeNotes || [],
+              activeEffects: rawUser.activeEffects || []
+          };
+          return [...prev, sanitizedUser];
         });
-        // Send our existence back so they know we are here
-        // (Note: In Firebase approach, we are persistent in the 'users' node, 
-        // but rebroadcasting JOIN helps existing clients who might not be monitoring the whole user list actively for updates,
-        // though our commsService handles user list too. We keep this for redundancy).
-        if (localUser) {
-           // We don't strictly need to resend JOIN in Firebase mode if we rely on persistence,
-           // but it doesn't hurt.
-        }
         break;
         
       case 'NOTE_ON': {
         // Extract expressive params
-        const { noteIndex, velocity, duration, timestamp } = msg.payload as NotePayload;
+        const { noteIndex } = msg.payload as NotePayload;
         
         // Update Visual State
         setRemoteUsers(prev => prev.map(u => {
-          if (u.id === msg.senderId && !u.activeNotes.includes(noteIndex)) {
-            return { ...u, activeNotes: [...u.activeNotes, noteIndex] };
+          const currentNotes = u.activeNotes || [];
+          if (u.id === msg.senderId && !currentNotes.includes(noteIndex)) {
+            return { ...u, activeNotes: [...currentNotes, noteIndex] };
           }
           return u;
         }));
         
         // Play remote sound using current theme/scale settings
-        // Future improvement: Use `velocity` to scale volume in noteOn
         const freq = audioEngine.getFreq(theme.baseFreq, effectiveScale, noteIndex);
         audioEngine.noteOn(msg.senderId, noteIndex, freq, theme.synthConfig);
         break;
@@ -121,7 +122,8 @@ const App: React.FC = () => {
         const { noteIndex } = msg.payload;
         setRemoteUsers(prev => prev.map(u => {
             if (u.id === msg.senderId) {
-                return { ...u, activeNotes: u.activeNotes.filter(n => n !== noteIndex) };
+                const currentNotes = u.activeNotes || [];
+                return { ...u, activeNotes: currentNotes.filter(n => n !== noteIndex) };
             }
             return u;
         }));
@@ -133,9 +135,10 @@ const App: React.FC = () => {
         const { effect, active } = msg.payload;
         setRemoteUsers(prev => prev.map(u => {
             if (u.id === msg.senderId) {
+                const currentEffects = u.activeEffects || [];
                 const effects = active 
-                    ? [...u.activeEffects, effect]
-                    : u.activeEffects.filter(e => e !== effect);
+                    ? [...currentEffects, effect]
+                    : currentEffects.filter(e => e !== effect);
                 return { ...u, activeEffects: effects };
             }
             return u;
@@ -187,8 +190,8 @@ const App: React.FC = () => {
       if (NOTE_KEYS.hasOwnProperty(key)) {
         const baseIndex = NOTE_KEYS[key];
 
-        // Polyphony Check
-        if (localUser.activeNotes.length >= MAX_POLYPHONY) return;
+        // Polyphony Check (Safely check length)
+        if ((localUser.activeNotes || []).length >= MAX_POLYPHONY) return;
 
         // Calculate Chord Notes
         const intervals = CHORD_MODES[activeChordMode] || [0];
@@ -199,10 +202,11 @@ const App: React.FC = () => {
             // Trigger State Update
             setLocalUser(prev => {
                 if (!prev) return prev;
+                const currentNotes = prev.activeNotes || [];
                 // Hard polyphony limit check
-                if (prev.activeNotes.length >= MAX_POLYPHONY) return prev;
-                if (prev.activeNotes.includes(noteIndex)) return prev;
-                return { ...prev, activeNotes: [...prev.activeNotes, noteIndex] };
+                if (currentNotes.length >= MAX_POLYPHONY) return prev;
+                if (currentNotes.includes(noteIndex)) return prev;
+                return { ...prev, activeNotes: [...currentNotes, noteIndex] };
             });
 
             // Play Sound Locally
@@ -226,14 +230,16 @@ const App: React.FC = () => {
         
         // REVERB TOGGLE LOGIC
         if (effect === 'reverb_max') {
-            const isActive = localUser.activeEffects.includes('reverb_max');
+            // Safely check includes
+            const isActive = (localUser.activeEffects || []).includes('reverb_max');
             const newState = !isActive;
             
             setLocalUser(prev => {
                 if (!prev) return prev;
+                const currentEffects = prev.activeEffects || [];
                 const effects = newState 
-                    ? [...prev.activeEffects, effect]
-                    : prev.activeEffects.filter(e => e !== effect);
+                    ? [...currentEffects, effect]
+                    : currentEffects.filter(e => e !== effect);
                 return { ...prev, activeEffects: effects };
             });
             
@@ -243,8 +249,10 @@ const App: React.FC = () => {
         // OTHER EFFECTS (HOLD)
         else {
             setLocalUser(prev => {
-                if (!prev || prev.activeEffects.includes(effect)) return prev;
-                return { ...prev, activeEffects: [...prev.activeEffects, effect] };
+                if (!prev) return prev;
+                const currentEffects = prev.activeEffects || [];
+                if (currentEffects.includes(effect)) return prev;
+                return { ...prev, activeEffects: [...currentEffects, effect] };
             });
 
             audioEngine.setEffect(effect, true);
@@ -265,7 +273,8 @@ const App: React.FC = () => {
                 
                 setLocalUser(prev => {
                     if (!prev) return prev;
-                    return { ...prev, activeNotes: prev.activeNotes.filter(n => n !== noteIndex) };
+                    const currentNotes = prev.activeNotes || [];
+                    return { ...prev, activeNotes: currentNotes.filter(n => n !== noteIndex) };
                 });
 
                 audioEngine.noteOff(localUser.id, noteIndex);
@@ -279,7 +288,8 @@ const App: React.FC = () => {
 
             setLocalUser(prev => {
                 if (!prev) return prev;
-                return { ...prev, activeEffects: prev.activeEffects.filter(eff => eff !== effect) };
+                const currentEffects = prev.activeEffects || [];
+                return { ...prev, activeEffects: currentEffects.filter(eff => eff !== effect) };
             });
 
             audioEngine.setEffect(effect, false);
@@ -310,7 +320,8 @@ const App: React.FC = () => {
     return <Lobby onJoin={joinRoom} />;
   }
 
-  const hasReverb = localUser?.activeEffects.includes('reverb_max');
+  // Safe check for render
+  const hasReverb = (localUser?.activeEffects || []).includes('reverb_max');
 
   return (
     <div className="w-full h-screen bg-black overflow-hidden relative selection:bg-none">

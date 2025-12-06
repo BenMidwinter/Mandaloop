@@ -2,7 +2,6 @@ import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getDatabase, ref, push, onChildAdded, onDisconnect, set, remove, Database, DatabaseReference } from 'firebase/database';
 import { SignalMessage, MessageType, UserState, NotePayload } from '../types';
 
-// !!! IMPORTANT: REPLACE THIS WITH YOUR FIREBASE CONFIGURATION !!!
 const firebaseConfig = {
   apiKey: "AIzaSyC8cCm5890Za9qZsm1mGqYOuGTShgO3xfo",
   authDomain: "mandaloop-6502e.firebaseapp.com",
@@ -24,16 +23,11 @@ export class CommsService {
   private onMessageCallback: ((msg: SignalMessage) => void) | null = null;
 
   constructor() {
-    // Basic check to see if user has configured Firebase
-    if (firebaseConfig.apiKey === "YOUR_API_KEY") {
-      console.warn("Mandaloop: Firebase config is missing. Multiplayer will not function until `services/commsService.ts` is updated.");
-    } else {
-      try {
-        this.app = initializeApp(firebaseConfig);
-        this.db = getDatabase(this.app);
-      } catch (e) {
-        console.error("Firebase init error:", e);
-      }
+    try {
+      this.app = initializeApp(firebaseConfig);
+      this.db = getDatabase(this.app);
+    } catch (e) {
+      console.error("Firebase init error:", e);
     }
   }
 
@@ -49,19 +43,11 @@ export class CommsService {
     this.usersRef = ref(this.db, `rooms/${roomId}/users`);
 
     // Listen for new events (notes, effects, joins)
-    // We limit to the last 1 initially to avoid replaying the entire history, 
-    // but effectively we just want "new" children. 
-    // 'limitToLast(1)' combined with 'onChildAdded' often misses events if we aren't careful, 
-    // so for a jam session, listening to the stream from 'now' is ideal.
-    // For simplicity in this implementation, we just listen to child_added.
-    // In a production app, we might want to filter by timestamp > connectionTime.
     const startTime = Date.now();
 
     onChildAdded(this.eventsRef, (snapshot) => {
       const data = snapshot.val() as SignalMessage;
-      // Filter out stale events from before we joined if desired, 
-      // though replaying the 'current state' (like active themes) might be wanted.
-      // For notes, we only want fresh ones.
+      // For notes, we only want fresh ones to avoid replaying old sounds on join
       if (data.type === 'NOTE_ON' || data.type === 'NOTE_OFF') {
         if (data.timestamp && data.timestamp < startTime) return;
       }
@@ -73,8 +59,18 @@ export class CommsService {
 
     // Handle Presence (Users List)
     onChildAdded(this.usersRef, (snapshot) => {
-       const user = snapshot.val() as UserState;
-       // We can treat a new user entry as a JOIN event for the local state
+       const rawUser = snapshot.val() as Partial<UserState>;
+       
+       // Sanitize user data (Firebase removes empty arrays)
+       const user: UserState = {
+           id: rawUser.id || 'unknown',
+           name: rawUser.name || 'Anonymous',
+           colorIndex: rawUser.colorIndex || 0,
+           activeNotes: rawUser.activeNotes || [],
+           activeEffects: rawUser.activeEffects || []
+       };
+
+       // Notify app of existing/new users
        if (this.onMessageCallback) {
            this.onMessageCallback({
                type: 'JOIN',
@@ -86,7 +82,6 @@ export class CommsService {
     });
   }
 
-  // --- Specific method for sending notes as requested ---
   public sendNote(notePayload: NotePayload, userId: string) {
     if (!this.eventsRef) return;
     
@@ -115,18 +110,16 @@ export class CommsService {
       push(this.eventsRef, msg);
   }
 
-  // --- Generic send for effects, themes, etc ---
   public send(type: MessageType, payload: any, senderId: string) {
     if (!this.eventsRef) return;
 
     // If it's a JOIN event, we also want to persist the user in the 'users' node
-    // to handle the user list properly.
     if (type === 'JOIN') {
         this.localUserId = senderId;
         if (this.usersRef) {
             const userRef = ref(this.db, `rooms/${this.roomId}/users/${senderId}`);
             set(userRef, payload);
-            // Remove user on disconnect
+            // Remove user on disconnect (Presence system)
             onDisconnect(userRef).remove();
         }
     }
@@ -140,11 +133,6 @@ export class CommsService {
         timestamp: Date.now()
     };
     push(this.eventsRef, msg);
-  }
-
-  public close() {
-    // Firebase connection persists, but we could remove listeners here if needed.
-    // For now, we rely on page unload or new connection to reset.
   }
 }
 

@@ -76,12 +76,19 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
     const angleStep = sliceAngle / symmetryPerUser;
 
     users.forEach((user, i) => {
+      if (!user) return; // Safety check
+      
       const userStartAngle = i * sliceAngle;
       
-      const hasVibrato = user.activeEffects.includes('vibrato');
-      const hasFilter = user.activeEffects.includes('filter_close');
-      const hasDistort = user.activeEffects.includes('distort');
-      const hasReverb = user.activeEffects.includes('reverb_max');
+      // Safety defaults: Firebase might return undefined for empty arrays
+      const activeEffects = user.activeEffects || [];
+      const activeNotes = user.activeNotes || [];
+
+      // Safe includes check
+      const hasVibrato = activeEffects.includes('vibrato');
+      const hasFilter = activeEffects.includes('filter_close');
+      const hasDistort = activeEffects.includes('distort');
+      const hasReverb = activeEffects.includes('reverb_max');
 
       // Draw Separators
       if (users.length > 1) {
@@ -93,7 +100,7 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
         ctx.stroke();
       }
 
-      user.activeNotes.forEach(noteIndex => {
+      activeNotes.forEach(noteIndex => {
         // Map note to radius (Inner -> Outer)
         const radiusStep = maxRadius / 15;
         const baseRadius = (noteIndex + 1) * radiusStep;
