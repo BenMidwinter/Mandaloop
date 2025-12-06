@@ -1,5 +1,5 @@
 import { initializeApp, FirebaseApp } from 'firebase/app';
-import { getDatabase, ref, push, onChildAdded, onDisconnect, set, remove, Database, DatabaseReference } from 'firebase/database';
+import { getDatabase, ref, push, onChildAdded, onChildRemoved, onDisconnect, set, remove, Database, DatabaseReference } from 'firebase/database'; // Added onChildRemoved
 import { SignalMessage, MessageType, UserState, NotePayload } from '../types';
 
 const firebaseConfig = {
@@ -38,7 +38,6 @@ export class CommsService {
     this.onMessageCallback = onMessage;
     
     // References
-    const roomRef = ref(this.db, `rooms/${roomId}`);
     this.eventsRef = ref(this.db, `rooms/${roomId}/events`);
     this.usersRef = ref(this.db, `rooms/${roomId}/users`);
 
@@ -57,11 +56,10 @@ export class CommsService {
       }
     });
 
-    // Handle Presence (Users List)
+    // Handle Presence (User Joined)
     onChildAdded(this.usersRef, (snapshot) => {
        const rawUser = snapshot.val() as Partial<UserState>;
        
-       // Sanitize user data (Firebase removes empty arrays)
        const user: UserState = {
            id: rawUser.id || 'unknown',
            name: rawUser.name || 'Anonymous',
@@ -70,7 +68,6 @@ export class CommsService {
            activeEffects: rawUser.activeEffects || []
        };
 
-       // Notify app of existing/new users
        if (this.onMessageCallback) {
            this.onMessageCallback({
                type: 'JOIN',
@@ -79,6 +76,19 @@ export class CommsService {
                senderId: user.id
            });
        }
+    });
+
+    // Handle Presence (User Left) - NEW LISTENER
+    onChildRemoved(this.usersRef, (snapshot) => {
+        const userId = snapshot.key;
+        if (userId && this.onMessageCallback) {
+            this.onMessageCallback({
+                type: 'LEAVE',
+                roomId: this.roomId,
+                payload: null,
+                senderId: userId
+            });
+        }
     });
   }
 
@@ -111,14 +121,11 @@ export class CommsService {
   }
 
   public send(type: MessageType, payload: any, senderId: string) {
-    // FIXED: Added check for !this.db to satisfy TypeScript
     if (!this.eventsRef || !this.db) return;
 
-    // If it's a JOIN event, we also want to persist the user in the 'users' node
     if (type === 'JOIN') {
         this.localUserId = senderId;
         if (this.usersRef) {
-            // Now TypeScript knows this.db is not null
             const userRef = ref(this.db, `rooms/${this.roomId}/users/${senderId}`);
             set(userRef, payload);
             // Remove user on disconnect (Presence system)
@@ -126,7 +133,6 @@ export class CommsService {
         }
     }
 
-    // Push the event to the stream
     const msg: SignalMessage = {
         type,
         roomId: this.roomId,
