@@ -1,8 +1,10 @@
+// ... (Imports stay same) ...
 import React, { useState } from 'react';
 import { Theme, SynthConfig } from '../types';
 import { generateTheme } from '../services/geminiService';
 import { SCALES, CHORD_MODES } from '../services/audioEngine';
 
+// ... (Interface stays same) ...
 interface ControlsProps {
   userCount: number;
   onAddUser: () => void;
@@ -33,7 +35,7 @@ const Controls: React.FC<ControlsProps> = ({
 }) => {
   const [prompt, setPrompt] = useState('');
   const [isOpen, setIsOpen] = useState(false); 
-  const [showSynth, setShowSynth] = useState(false); // Toggle for advanced controls
+  const [showSynth, setShowSynth] = useState(false);
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,7 +45,7 @@ const Controls: React.FC<ControlsProps> = ({
     try {
       const newTheme = await generateTheme(finalPrompt, roomCode);
       onThemeChange(newTheme);
-      setShowSynth(true); // Auto-open controls so they can see what happened
+      setShowSynth(true); 
     } catch (err) {
       console.error(err);
     } finally {
@@ -59,6 +61,15 @@ const Controls: React.FC<ControlsProps> = ({
               ...currentTheme.synthConfig,
               [key]: value
           }
+      };
+      onThemeChange(updatedTheme);
+  };
+
+  // NEW: Handle Root Note (Base Freq) Change
+  const handleBaseFreqChange = (value: number) => {
+      const updatedTheme = {
+          ...currentTheme,
+          baseFreq: value
       };
       onThemeChange(updatedTheme);
   };
@@ -147,7 +158,6 @@ const Controls: React.FC<ControlsProps> = ({
         </form>
       </div>
 
-      {/* NEW: Collapsible Synth Controls */}
       <div className="mb-4">
          <button 
             onClick={() => setShowSynth(!showSynth)}
@@ -159,6 +169,21 @@ const Controls: React.FC<ControlsProps> = ({
          
          {showSynth && (
              <div className="mt-4 space-y-4 p-4 bg-black/40 rounded border border-white/5">
+                 
+                 {/* NEW: Root Note (Base Freq) */}
+                 <div>
+                     <div className="flex justify-between text-[10px] text-white/70 mb-1">
+                         <span>BASE PITCH (ROOT)</span>
+                         <span>{Math.round(currentTheme.baseFreq)}Hz</span>
+                     </div>
+                     <input 
+                         type="range" min="50" max="400" step="5"
+                         value={currentTheme.baseFreq}
+                         onChange={(e) => handleBaseFreqChange(parseFloat(e.target.value))}
+                         className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-green-500"
+                     />
+                 </div>
+
                  {/* Attack / Release */}
                  <div className="space-y-3">
                      <div>
@@ -204,7 +229,8 @@ const Controls: React.FC<ControlsProps> = ({
                  {/* Vibrato */}
                  <div>
                      <div className="flex justify-between text-[10px] text-white/70 mb-1">
-                         <span>WOBBLE (VIBRATO)</span>
+                         {/* Clarified Label */}
+                         <span>VIBRATO INTENSITY (C BUTTON)</span>
                          <span>{currentTheme.synthConfig.vibratoDepth}</span>
                      </div>
                      <input 
