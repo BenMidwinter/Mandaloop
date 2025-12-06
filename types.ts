@@ -24,8 +24,8 @@ export interface UserState {
   id: string;
   name: string;
   colorIndex: number;
-  activeNotes: number[]; // Array of scale degrees currently held (0-13)
-  activeEffects: string[]; // ['vibrato', 'filter_low', 'reverb_max', etc]
+  activeNotes: number[]; 
+  activeEffects: string[]; 
 }
 
 export interface AudioSettings {
@@ -35,13 +35,13 @@ export interface AudioSettings {
 
 export interface NotePayload {
   noteIndex: number;
-  velocity: number;   // 0.0 - 1.0
-  duration?: number;  // Optional: estimated duration if known
-  timestamp: number;  // Event time
+  velocity: number;  
+  duration?: number;  
+  timestamp: number; 
 }
 
-// Comms / Event Types
-export type MessageType = 'JOIN' | 'LEAVE' | 'NOTE_ON' | 'NOTE_OFF' | 'EFFECT_CHANGE' | 'SYNC_THEME';
+// Added SYNC_SCALE to the list
+export type MessageType = 'JOIN' | 'LEAVE' | 'NOTE_ON' | 'NOTE_OFF' | 'EFFECT_CHANGE' | 'SYNC_THEME' | 'SYNC_SCALE';
 
 export interface SignalMessage {
   type: MessageType;
