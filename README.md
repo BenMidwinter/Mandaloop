@@ -1,5 +1,4 @@
 Mandaloop: A Digital Transitional Space
-<div align="center"> <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" /> </div>
 
 Mandaloop is a browser-based, multiplayer generative synthesizer designed for remote therapeutic work. It creates a latency-free "shared instrument" where clinician and client can co-improvise in real-time.
 
