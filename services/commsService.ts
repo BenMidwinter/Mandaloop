@@ -111,12 +111,14 @@ export class CommsService {
   }
 
   public send(type: MessageType, payload: any, senderId: string) {
-    if (!this.eventsRef) return;
+    // FIXED: Added check for !this.db to satisfy TypeScript
+    if (!this.eventsRef || !this.db) return;
 
     // If it's a JOIN event, we also want to persist the user in the 'users' node
     if (type === 'JOIN') {
         this.localUserId = senderId;
         if (this.usersRef) {
+            // Now TypeScript knows this.db is not null
             const userRef = ref(this.db, `rooms/${this.roomId}/users/${senderId}`);
             set(userRef, payload);
             // Remove user on disconnect (Presence system)
@@ -134,6 +136,5 @@ export class CommsService {
     };
     push(this.eventsRef, msg);
   }
-}
 
 export const comms = new CommsService();
