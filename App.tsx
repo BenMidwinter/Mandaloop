@@ -3,7 +3,7 @@ import MandalaCanvas from './components/MandalaCanvas';
 import Controls from './components/Controls';
 import Lobby from './components/Lobby';
 import { Theme, UserState, SignalMessage, NotePayload } from './types';
-import { audioEngine } from './services/audioEngine';
+import { audioEngine, SCALES, CHORD_MODES } from './services/audioEngine'; // Added CHORD_MODES;
 import { comms } from './services/commsService';
 
 const DEFAULT_THEME: Theme = {
@@ -47,16 +47,6 @@ const EFFECT_KEYS: Record<string, string> = {
 };
 
 const MAX_POLYPHONY = 5;
-
-// Intervals for chord modes (scale degrees relative to root)
-export const CHORD_MODES: Record<string, number[]> = {
-    'Single': [0],
-    'Octaves': [0, 7], 
-    'Triad (1-3-5)': [0, 2, 4], 
-    'Sus4 (1-4-5)': [0, 3, 4],
-    'Open 5th (1-5)': [0, 4],
-    'Cluster (1-2)': [0, 1]
-};
 
 const App: React.FC = () => {
   const [isInLobby, setIsInLobby] = useState(true);
