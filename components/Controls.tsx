@@ -19,6 +19,7 @@ interface ControlsProps {
   setActiveChordMode: (mode: string) => void;
   overrideScale: string;
   setOverrideScale: (scale: string) => void;
+  onAiApply?: (key: string, scale: string) => void;
 }
 
 const Controls: React.FC<ControlsProps> = ({
@@ -31,7 +32,8 @@ const Controls: React.FC<ControlsProps> = ({
   activeChordMode,
   setActiveChordMode,
   overrideScale,
-  setOverrideScale
+  setOverrideScale,
+  onAiApply
 }) => {
   const [prompt, setPrompt] = useState('');
   const [isOpen, setIsOpen] = useState(false); 
@@ -45,6 +47,13 @@ const Controls: React.FC<ControlsProps> = ({
     try {
       const newTheme = await generateTheme(finalPrompt, roomCode);
       onThemeChange(newTheme);
+      // --- NEW CODE START ---
+      // Check if the AI sent us a Musical Key and Scale, then apply them
+      const aiResponse = newTheme as any; 
+      if (onAiApply && aiResponse.key && aiResponse.scale) {
+          onAiApply(aiResponse.key, aiResponse.scale);
+      }
+      // --- NEW CODE END ---
       setShowSynth(true); 
     } catch (err) {
       console.error(err);

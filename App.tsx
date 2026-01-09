@@ -46,6 +46,21 @@ const EFFECT_KEYS: Record<string, string> = {
 
 const MAX_POLYPHONY = 24;
 
+// Add this just before the App component definition
+const getFreqFromKey = (keyName: string): number => {
+    const map: Record<string, number> = {
+        'C': 130.81, 'C#': 138.59, 'Db': 138.59,
+        'D': 146.83, 'D#': 155.56, 'Eb': 155.56,
+        'E': 164.81,
+        'F': 174.61, 'F#': 185.00, 'Gb': 185.00,
+        'G': 196.00, 'G#': 207.65, 'Ab': 207.65,
+        'A': 220.00, 'A#': 233.08, 'Bb': 233.08,
+        'B': 246.94
+    };
+    // Default to C if AI hallucinates a non-key
+    return map[keyName] || 130.81; 
+};
+
 const App: React.FC = () => {
   const [isInLobby, setIsInLobby] = useState(true);
   const [localUser, setLocalUser] = useState<UserState | null>(null);
@@ -191,6 +206,23 @@ const App: React.FC = () => {
     }, 500);
   };
 
+// --- PASTE THIS INSIDE App component, BEFORE 'if (isInLobby)...' ---
+  const handleAiApply = (newKey: string, newScale: string) => {
+      // 1. Convert Key (e.g., "G") to Freq (196.00)
+      const newBaseFreq = getFreqFromKey(newKey);
+      
+      // 2. Update Local State
+      setOverrideScale(newScale);
+      const updatedTheme = { ...theme, baseFreq: newBaseFreq };
+      setTheme(updatedTheme);
+
+      // 3. Sync to Network
+      if (localUser) {
+          comms.send('SYNC_SCALE', newScale, localUser.id);
+          comms.send('SYNC_THEME', updatedTheme, localUser.id);
+      }
+  };
+
   useEffect(() => {
     if (isInLobby || !localUser) return;
 
@@ -334,7 +366,7 @@ const App: React.FC = () => {
 
   return (
     <div className="w-full h-screen bg-black overflow-hidden relative selection:bg-none">
-      <MandalaCanvas users={allUsers} theme={theme} />
+      <MandalaCanvas users={allUsers} theme={theme} scaleType={effectiveScale}/>
       
       <Controls 
         userCount={allUsers.length}
@@ -349,7 +381,8 @@ const App: React.FC = () => {
         activeChordMode={activeChordMode}
         setActiveChordMode={setActiveChordMode}
         overrideScale={overrideScale}
-        setOverrideScale={handleScaleChange} 
+        setOverrideScale={handleScaleChange}
+        onAiApply={handleAiApply} 
       />
 
       {/* Footer / Key Guide */}

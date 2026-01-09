@@ -4,16 +4,34 @@ import { UserState, Theme } from '../types';
 interface MandalaCanvasProps {
   users: UserState[];
   theme: Theme;
+  scaleType: string; // <--- ADDED THIS PROP
 }
 
-const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
+const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme, scaleType }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>(0);
+
+  // 
+  // Helper to map Chromatic Pitch (0-11) to Visual Scale Degree (0-4 or 0-6)
+  const getVisualPosition = (noteIndex: number, type: string) => {
+    const octave = Math.floor(noteIndex / 12);
+    const pitchClass = noteIndex % 12;
+
+    if (type === 'pentatonic') {
+        // Pentatonic Map: 0,2,4,7,9 -> 0,1,2,3,4
+        // If a note falls in a gap (rare), we map it to the nearest lower neighbor
+        const map = [0, 0, 1, 1, 2, 3, 3, 4, 4, 4, 5, 5]; 
+        return (octave * 5) + map[pitchClass];
+    }
+    // Default / Diatonic (Assume 7 notes roughly map to chromatic)
+    // This squashes the 12 chromatic steps into 7 visual steps
+    const map = [0, 0, 1, 1, 2, 3, 3, 4, 5, 5, 6, 6];
+    return (octave * 7) + map[pitchClass];
+  };
 
   // Helper to draw specific geometric shapes
   const drawShape = (ctx: CanvasRenderingContext2D, x: number, y: number, size: number, type: number, filled: boolean) => {
     ctx.beginPath();
-    // INCREASED MODULO TO 5 to include the new Ace shape
     const shapeType = type % 5;
     
     if (shapeType === 0) {
@@ -43,24 +61,18 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
         }
         ctx.closePath();
     } else if (shapeType === 4) {
-        // NEW SHAPE: The Ace (Stylized Spade)
-        // A triangle pointing up with a wider base
-        ctx.moveTo(x, y - size); // Top Tip
-        ctx.bezierCurveTo(x + size, y - size/2, x + size, y + size/2, x, y + size/2); // Right Curve
-        ctx.bezierCurveTo(x - size, y + size/2, x - size, y - size/2, x, y - size); // Left Curve
-        
-        // The Stem
+        // The Ace
+        ctx.moveTo(x, y - size); 
+        ctx.bezierCurveTo(x + size, y - size/2, x + size, y + size/2, x, y + size/2); 
+        ctx.bezierCurveTo(x - size, y + size/2, x - size, y - size/2, x, y - size); 
         ctx.moveTo(x, y + size/2);
         ctx.lineTo(x + size/4, y + size);
         ctx.lineTo(x - size/4, y + size);
         ctx.lineTo(x, y + size/2);
     }
 
-    if (filled) {
-        ctx.fill();
-    } else {
-        ctx.stroke();
-    }
+    if (filled) ctx.fill();
+    else ctx.stroke();
   };
 
   const render = (time: number) => {
@@ -69,7 +81,6 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Fade trail - Slightly faster fade for crisper shapes
     ctx.fillStyle = 'rgba(5, 5, 5, 0.25)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -77,18 +88,14 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
     const centerY = canvas.height / 2;
     const maxRadius = Math.min(canvas.width, canvas.height) * 0.45;
     
-    // Each user gets a slice
     const sliceAngle = (Math.PI * 2) / users.length;
-    
-    // Determine radial symmetry count based on user count
     const symmetryPerUser = Math.max(1, Math.floor(12 / users.length));
     const angleStep = sliceAngle / symmetryPerUser;
 
     users.forEach((user, i) => {
-      if (!user) return; // Safety check
+      if (!user) return;
       
       const userStartAngle = i * sliceAngle;
-      
       const activeEffects = user.activeEffects || [];
       const activeNotes = user.activeNotes || [];
 
@@ -108,36 +115,37 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
       }
 
       activeNotes.forEach(noteIndex => {
-        // UPDATED: Adjusted for 3 Octaves (Range 0-21)
-        // Divide by 24 so the highest notes don't fall off the edge
-        const radiusStep = maxRadius / 24; 
-        const baseRadius = (noteIndex + 2) * radiusStep; // Start slightly further out (center hole)
+        // --- KEY FIX STARTS HERE ---
+        // 1. Calculate Visual Position (Squashed to remove gaps)
+        const visualIndex = getVisualPosition(noteIndex, scaleType);
+        
+        // 2. Adjust max visual steps based on scale
+        // Pentatonic has 15 notes over 3 octaves (5*3). Diatonic has 21 (7*3).
+        const maxVisualSteps = scaleType === 'pentatonic' ? 15 : 21;
+        
+        const radiusStep = maxRadius / (maxVisualSteps + 2); 
+        const baseRadius = (visualIndex + 2) * radiusStep;
+        // --- KEY FIX ENDS HERE ---
         
         let radius = baseRadius;
         if (hasVibrato) {
           radius += Math.sin(time * 0.05) * 8;
         }
 
+        // NOTE: We still use the original noteIndex for Color and Shape
+        // This ensures C always looks like C (Red/Circle), even if its position shifts slightly.
         const color = theme.colors[noteIndex % theme.colors.length];
         
-        // Style Setup
         ctx.fillStyle = color;
         ctx.strokeStyle = color;
         ctx.shadowColor = color;
         ctx.shadowBlur = hasReverb ? 30 : 5;
         ctx.lineWidth = hasDistort ? 3 : 2;
+        ctx.globalAlpha = hasFilter ? 0.3 : 1;
+        if (hasFilter) ctx.shadowBlur = 0;
 
-        if (hasFilter) {
-            ctx.globalAlpha = 0.3;
-            ctx.shadowBlur = 0;
-        } else {
-            ctx.globalAlpha = 1;
-        }
-
-        // Draw Symmetry Repetitions
         for (let s = 0; s < symmetryPerUser; s++) {
             const currentAngle = userStartAngle + (s * angleStep) + (angleStep / 2);
-            
             const x = centerX + Math.cos(currentAngle) * radius;
             const y = centerY + Math.sin(currentAngle) * radius;
 
@@ -145,14 +153,10 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
             ctx.translate(x, y);
             ctx.rotate(currentAngle + Math.PI/2); 
 
-            // UPDATED SIZE LOGIC:
-            // Base size is 22 (bigger).
-            // Shrinks slower (0.6 multiplier).
-            // Minimum size is 8 (never disappears).
+            // Use noteIndex for size so low notes are still big
             const size = Math.max(8, 22 - (noteIndex * 0.6));
             
             drawShape(ctx, 0, 0, size, noteIndex, !hasDistort); 
-            
             ctx.restore();
         }
 
@@ -164,38 +168,30 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
     ctx.beginPath();
     ctx.arc(centerX, centerY, 3, 0, Math.PI*2);
     ctx.fillStyle = '#fff';
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = '#fff';
     ctx.fill();
-    ctx.shadowBlur = 0;
 
     requestRef.current = requestAnimationFrame((t) => render(t));
   };
 
   useEffect(() => {
+    // ... (Resize logic remains the same)
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const resize = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
     };
     window.addEventListener('resize', resize);
     resize();
-
     requestRef.current = requestAnimationFrame((t) => render(t));
-
     return () => {
       window.removeEventListener('resize', resize);
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
-  }, [users, theme]);
+  }, [users, theme, scaleType]); // <--- ADDED scaleType dependency
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="absolute top-0 left-0 w-full h-full z-0"
-    />
+    <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full z-0" />
   );
 };
 
