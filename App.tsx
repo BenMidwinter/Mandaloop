@@ -3,7 +3,7 @@ import MandalaCanvas from './components/MandalaCanvas';
 import Controls from './components/Controls';
 import Lobby from './components/Lobby';
 import { Theme, UserState, SignalMessage, NotePayload } from './types';
-import { audioEngine, CHORD_MODES } from './services/audioEngine';
+import { audioEngine, CHORD_MODES, VALID_SCALES } from './services/audioEngine';
 import { comms } from './services/commsService';
 
 const DEFAULT_THEME: Theme = {
@@ -211,6 +211,20 @@ const App: React.FC = () => {
       // 1. Convert Key (e.g., "G") to Freq (196.00)
       const newBaseFreq = getFreqFromKey(newKey);
       
+      let safeScale = newScale.toLowerCase().trim().replace(/ /g, "_")
+
+      if (!VALID_SCALES.includes(safeScale)) {
+          console.warn(`AI suggested invalid scale '${safeScale}'. Defaulting to 'pentatonic'.`);
+          
+          // Smart Fallback
+          if (safeScale.includes('minor')) {
+               // specific check if you have 'pentatonic_minor' in your engine
+               safeScale = VALID_SCALES.includes('pentatonic_minor') ? 'pentatonic_minor' : 'minor';
+          } else {
+               safeScale = 'pentatonic';
+          }
+      }
+
       // 2. Update Local State
       setOverrideScale(newScale);
       const updatedTheme = { ...theme, baseFreq: newBaseFreq };

@@ -81,6 +81,10 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme, scaleType }
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1;
+
     ctx.fillStyle = 'rgba(5, 5, 5, 0.25)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 

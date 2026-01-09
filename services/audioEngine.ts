@@ -17,6 +17,8 @@ export const SCALES: Record<string, number[]> = {
   'hirajoshi': [0, 2, 3, 7, 8]
 };
 
+export const VALID_SCALES = Object.keys (SCALES);
+
 export const CHORD_MODES: Record<string, number[]> = {
     'Single': [0],
     'Octaves': [0, 7], 
