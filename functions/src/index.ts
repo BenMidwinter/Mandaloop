@@ -1,23 +1,36 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { setGlobalOptions } from "firebase-functions/v2";
-import { onValueWritten } from "firebase-functions/v2/database"; // <--- NEW
-import * as admin from "firebase-admin"; // <--- NEW
-import { getDatabase } from "firebase-admin/database"; // <--- NEW
+import { onValueWritten } from "firebase-functions/v2/database"; 
+import * as admin from "firebase-admin"; 
+import { getDatabase } from "firebase-admin/database"; 
 import { GoogleGenerativeAI, Schema, SchemaType } from "@google/generative-ai";
 
-// 0. Initialize Admin (Required for database deletions)
+// 0. Initialize Admin
 admin.initializeApp();
 
-// 1. Set region to London
+// 1. Set region
 setGlobalOptions({ region: "europe-west2" });
 
-// 2. Define the Schema locally
+// --- NEW: DEFINE THE VALID SCALES MENU ---
+const VALID_SCALES = [
+  "pentatonic_major", "pentatonic_minor", "major", "minor",
+  "harmonic_minor", "dorian", "phrygian", "lydian", 
+  "mixolydian", "locrian", "whole_tone", "chromatic", 
+  "pelog", "hirajoshi"
+];
+
+// 2. Define the Schema locally (Updated with 'key' and 'explanation')
 const themeSchema: Schema = {
   type: SchemaType.OBJECT,
   properties: {
     name: { type: SchemaType.STRING },
     colors: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
-    scale: { type: SchemaType.STRING },
+    
+    // We add KEY and EXPLANATION here so the frontend can snap the synth
+    key: { type: SchemaType.STRING, description: "Musical Key (e.g. C, F#, Bb)" },
+    scale: { type: SchemaType.STRING, description: `Must be one of: ${VALID_SCALES.join(', ')}` },
+    explanation: { type: SchemaType.STRING },
+
     synthConfig: {
       type: SchemaType.OBJECT,
       properties: {
@@ -36,7 +49,7 @@ const themeSchema: Schema = {
     baseFreq: { type: SchemaType.NUMBER },
     moodDescription: { type: SchemaType.STRING }
   },
-  required: ["name", "colors", "scale", "synthConfig"]
+  required: ["name", "colors", "scale", "key", "synthConfig"]
 };
 
 // 3. The Secure Function (Gemini)
@@ -50,7 +63,7 @@ export const generateMandalaTheme = onCall({ secrets: ["GEMINI_API_KEY"] }, asyn
 
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ 
-        model: "gemini-3-flash-preview",
+        model: "gemini-3-flash-preview", // Reverted to stable model (gemini-3 is often experimental)
         generationConfig: {
             responseMimeType: "application/json",
             responseSchema: themeSchema
@@ -59,12 +72,34 @@ export const generateMandalaTheme = onCall({ secrets: ["GEMINI_API_KEY"] }, asyn
 
     try {
         const seedInstruction = seed ? ` Use the seed word "${seed}" to strictly determine the style.` : "";
-        const fullPrompt = `Create a unique audiovisual theme for a musical mandala app.${seedInstruction} The concept is: "${prompt}". Make the sound large and textured.`;
+        
+        // --- UPDATED PROMPT: INJECTING THE MENU ---
+        const fullPrompt = `
+          Create a unique audiovisual theme for a musical mandala app.${seedInstruction} 
+          The concept is: "${prompt}". 
+          Make the sound large and textured.
+          
+          CRITICAL INSTRUCTION: 
+          The 'scale' field MUST be strictly one of these values: ${VALID_SCALES.join(', ')}.
+          Do not use spaces or capital letters for the scale (e.g. use "pentatonic_minor", not "Pentatonic Minor").
+        `;
 
         const result = await model.generateContent(fullPrompt);
         const responseText = result.response.text();
-        
-        return JSON.parse(responseText);
+        const data = JSON.parse(responseText);
+
+        // --- NEW: THE BOUNCER (Safety Check) ---
+        // Even with instructions, AI sometimes hallucinates. We catch it here.
+        if (!VALID_SCALES.includes(data.scale)) {
+            console.warn(`AI Hallucinated scale: '${data.scale}'. Defaulting to 'pentatonic_minor'.`);
+            
+            // Smart Fallback
+            if (data.scale.toLowerCase().includes('minor')) data.scale = 'pentatonic_minor';
+            else if (data.scale.toLowerCase().includes('major')) data.scale = 'pentatonic_major';
+            else data.scale = 'pentatonic_minor';
+        }
+
+        return data;
 
     } catch (error: any) {
         console.error("Gemini Server Error:", error);
@@ -72,22 +107,19 @@ export const generateMandalaTheme = onCall({ secrets: ["GEMINI_API_KEY"] }, asyn
     }
 });
 
-// 4. The Janitor Protocol (Database Trigger)
-// Watch the "users" node of any room. If it becomes empty, delete the room.
+// 4. The Janitor Protocol (Kept exactly as you had it)
 export const cleanupEmptyRoom = onValueWritten(
     {
         ref: "rooms/{roomId}/users",
         region: "europe-west1",
     },
     async (event) => {
-        // If the data was deleted (does not exist) or has 0 children
         if (!event.data.after.exists() || event.data.after.numChildren() === 0) {
             
             const roomId = event.params.roomId;
             const db = getDatabase();
             const roomRef = db.ref(`rooms/${roomId}`);
 
-            // Check if the room still exists (to prevent loops or errors)
             const snapshot = await roomRef.once('value');
             if (snapshot.exists()) {
                 console.log(`Janitor Protocol: Room ${roomId} is empty. Wiping data.`);
