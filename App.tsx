@@ -27,18 +27,24 @@ const DEFAULT_THEME: Theme = {
 };
 
 const NOTE_KEYS: Record<string, number> = {
-  's': 0, 'd': 1, 'f': 2, 'g': 3, 'h': 4, 'j': 5, 'k': 6,
-  'e': 7, 'r': 8, 't': 9, 'y': 10, 'u': 11, 'i': 12, 'o': 13
+  // Octave 1 (Bottom Row) - Low
+  'z': 0, 'x': 1, 'c': 2, 'v': 3, 'b': 4, 'n': 5, 'm': 6,
+  
+  // Octave 2 (Middle Row) - Mid
+  's': 7, 'd': 8, 'f': 9, 'g': 10, 'h': 11, 'j': 12, 'k': 13,
+  
+  // Octave 3 (Top Row) - High
+  'e': 14, 'r': 15, 't': 16, 'y': 17, 'u': 18, 'i': 19, 'o': 20, 'p': 21
 };
 
 const EFFECT_KEYS: Record<string, string> = {
-  'c': 'vibrato',
-  'v': 'reverb_max', 
-  'z': 'filter_close',
-  'x': 'distort'
+  ';': 'vibrato',
+  '\'': 'reverb_max', 
+  '[': 'filter_close',
+  ']': 'distort'
 };
 
-const MAX_POLYPHONY = 5;
+const MAX_POLYPHONY = 24;
 
 const App: React.FC = () => {
   const [isInLobby, setIsInLobby] = useState(true);
@@ -188,13 +194,16 @@ const App: React.FC = () => {
   useEffect(() => {
     if (isInLobby || !localUser) return;
 
+    // Define which effects should stick (Latch) vs which are momentary
+    const TOGGLE_EFFECTS = ['reverb_max', 'filter_close', 'distort'];
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
-      if ((e.target as HTMLElement).tagName === 'SELECT') return;
 
       const key = e.key.toLowerCase(); 
 
+      // --- NOTE LOGIC (Unchanged) ---
       if (NOTE_KEYS.hasOwnProperty(key)) {
         const baseIndex = NOTE_KEYS[key];
         if ((localUser.activeNotes || []).length >= MAX_POLYPHONY) return;
@@ -203,7 +212,6 @@ const App: React.FC = () => {
         
         intervals.forEach(interval => {
             const noteIndex = baseIndex + interval;
-
             setLocalUser(prev => {
                 if (!prev) return prev;
                 const currentNotes = prev.activeNotes || [];
@@ -213,76 +221,75 @@ const App: React.FC = () => {
             });
 
             const freq = audioEngine.getFreq(theme.baseFreq, effectiveScale, noteIndex);
-            
             audioEngine.noteOn(localUser.id, noteIndex, freq, theme.synthConfig, localUser.activeEffects);
 
-            const notePayload: NotePayload = {
-              noteIndex,
-              velocity: 0.8, 
-              timestamp: Date.now(),
-              duration: 0 
-            };
+            const notePayload: NotePayload = { noteIndex, velocity: 0.8, timestamp: Date.now(), duration: 0 };
             comms.sendNote(notePayload, localUser.id);
         });
       }
 
+      // --- NEW EFFECT LOGIC (Multi-Toggle) ---
       if (EFFECT_KEYS.hasOwnProperty(key)) {
         const effect = EFFECT_KEYS[key];
-        let newEffects = localUser.activeEffects;
+        const isToggle = TOGGLE_EFFECTS.includes(effect);
 
-        if (effect === 'reverb_max') {
-            const isActive = localUser.activeEffects.includes('reverb_max');
-            const newState = !isActive;
-            
-            newEffects = newState 
-                ? [...localUser.activeEffects, effect]
-                : localUser.activeEffects.filter(e => e !== effect);
+        if (isToggle) {
+            // TOGGLE LOGIC: Flip the state
+            const isActive = localUser.activeEffects.includes(effect);
+            const newEffects = isActive 
+                ? localUser.activeEffects.filter(e => e !== effect) // Remove
+                : [...localUser.activeEffects, effect];             // Add
                 
             setLocalUser({ ...localUser, activeEffects: newEffects });
-            comms.send('EFFECT_CHANGE', { effect, active: newState }, localUser.id);
+            comms.send('EFFECT_CHANGE', { effect, active: !isActive }, localUser.id);
+            audioEngine.updateUserEffects(localUser.id, newEffects);
         } 
         else {
+            // MOMENTARY LOGIC (Vibrato): Only add if not present
             if (!localUser.activeEffects.includes(effect)) {
-                newEffects = [...localUser.activeEffects, effect];
+                const newEffects = [...localUser.activeEffects, effect];
                 setLocalUser({ ...localUser, activeEffects: newEffects });
                 comms.send('EFFECT_CHANGE', { effect, active: true }, localUser.id);
+                audioEngine.updateUserEffects(localUser.id, newEffects);
             }
         }
-        audioEngine.updateUserEffects(localUser.id, newEffects);
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
         const key = e.key.toLowerCase();
 
+        // --- NOTE OFF LOGIC (Unchanged) ---
         if (NOTE_KEYS.hasOwnProperty(key)) {
             const baseIndex = NOTE_KEYS[key];
             const intervals = CHORD_MODES[activeChordMode] || [0];
-            
             intervals.forEach(interval => {
                 const noteIndex = baseIndex + interval;
-                
                 setLocalUser(prev => {
                     if (!prev) return prev;
                     const currentNotes = prev.activeNotes || [];
                     return { ...prev, activeNotes: currentNotes.filter(n => n !== noteIndex) };
                 });
-
                 audioEngine.noteOff(localUser.id, noteIndex);
                 comms.sendNoteOff(noteIndex, localUser.id);
             });
         }
 
+        // --- NEW EFFECT RELEASE LOGIC ---
         if (EFFECT_KEYS.hasOwnProperty(key)) {
             const effect = EFFECT_KEYS[key];
-            if (effect === 'reverb_max') return; 
+            const isToggle = TOGGLE_EFFECTS.includes(effect);
 
+            // If it's a toggle (Filter/Distort/Reverb), IGNORE key release.
+            // You have to press the key again to turn it off.
+            if (isToggle) return; 
+
+            // If it's Momentary (Vibrato), turn it off now.
             const newEffects = localUser.activeEffects.filter(eff => eff !== effect);
             setLocalUser(prev => {
                 if (!prev) return prev;
                 return { ...prev, activeEffects: newEffects };
             });
-
             audioEngine.updateUserEffects(localUser.id, newEffects);
             comms.send('EFFECT_CHANGE', { effect, active: false }, localUser.id);
         }
@@ -317,7 +324,13 @@ const App: React.FC = () => {
     return <Lobby onJoin={joinRoom} />;
   }
 
-  const hasReverb = (localUser?.activeEffects || []).includes('reverb_max');
+// Check which effects are currently ON
+  const activeFx = localUser?.activeEffects || [];
+  const hasReverb = activeFx.includes('reverb_max');
+  const hasFilter = activeFx.includes('filter_close');
+  const hasDistort = activeFx.includes('distort');
+  const hasVibrato = activeFx.includes('vibrato'); // Just for visual feedback while holding
+
 
   return (
     <div className="w-full h-screen bg-black overflow-hidden relative selection:bg-none">
@@ -341,38 +354,56 @@ const App: React.FC = () => {
 
       {/* Footer / Key Guide */}
       <div className="absolute bottom-6 left-0 right-0 flex justify-center pointer-events-none">
-         <div className="flex gap-8 items-center bg-black/40 backdrop-blur px-6 py-2 rounded-full border border-white/5">
-             <div className="flex gap-4 items-center border-r border-white/10 pr-6">
-                <div className="text-[10px] text-white/50 font-mono tracking-widest">KEYS</div>
-                <div className="flex gap-1">
-                    {['S','D','F','G','H','J','K'].map(k => (
-                        <span key={k} className="w-6 h-6 border border-white/30 flex items-center justify-center rounded text-[10px] text-white/80">{k}</span>
+         <div className="flex gap-8 items-center bg-black/60 backdrop-blur-md px-6 py-3 rounded-xl border border-white/10 shadow-2xl">
+             
+             {/* NOTES SECTION */}
+             <div className="flex flex-col gap-1 border-r border-white/10 pr-6">
+                {/* Top Row (High) */}
+                <div className="flex gap-1 justify-center">
+                    {['E','R','T','Y','U','I','O','P'].map(k => (
+                        <span key={k} className="w-6 h-6 border border-white/30 flex items-center justify-center rounded text-[10px] text-white/80 bg-white/5">{k}</span>
                     ))}
-                    <span className="text-white/20 mx-1">|</span>
-                    {['E','R','T','Y','U','I','O'].map(k => (
-                        <span key={k} className="w-6 h-6 border border-white/30 flex items-center justify-center rounded text-[10px] text-white/80">{k}</span>
+                </div>
+                {/* Middle Row (Mid) */}
+                <div className="flex gap-1 justify-center ml-2"> {/* ml-2 creates the keyboard 'stagger' look */}
+                    {['S','D','F','G','H','J','K'].map(k => (
+                        <span key={k} className="w-6 h-6 border border-white/30 flex items-center justify-center rounded text-[10px] text-white/80 bg-white/5">{k}</span>
+                    ))}
+                </div>
+                {/* Bottom Row (Low) */}
+                <div className="flex gap-1 justify-center ml-4">
+                    {['Z','X','C','V','B','N','M'].map(k => (
+                        <span key={k} className="w-6 h-6 border border-white/30 flex items-center justify-center rounded text-[10px] text-white/80 bg-white/5">{k}</span>
                     ))}
                 </div>
              </div>
 
+             {/* FX SECTION */}
              <div className="flex gap-4 items-center">
-                <div className="text-[10px] text-white/50 font-mono tracking-widest">FX</div>
-                <div className="flex gap-2">
+                <div className="text-[10px] text-white/50 font-mono tracking-widest writing-vertical">FX</div>
+                <div className="grid grid-cols-2 gap-2">
+                    {/* FILTER (Toggle) */}
                     <div className="flex items-center gap-1">
-                        <span className="w-6 h-6 border border-white/30 flex items-center justify-center rounded text-[10px] text-white/80">C</span>
+                        <span className={`w-6 h-6 border flex items-center justify-center rounded text-[10px] transition-colors ${hasFilter ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-white/30 text-white/80'}`}>[</span>
+                        <span className={`text-[9px] ${hasFilter ? 'text-green-400' : 'text-white/60'}`}>FILT</span>
+                    </div>
+
+                    {/* DISTORTION (Toggle) */}
+                    <div className="flex items-center gap-1">
+                        <span className={`w-6 h-6 border flex items-center justify-center rounded text-[10px] transition-colors ${hasDistort ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-white/30 text-white/80'}`}>]</span>
+                        <span className={`text-[9px] ${hasDistort ? 'text-green-400' : 'text-white/60'}`}>DIST</span>
+                    </div>
+
+                    {/* VIBRATO (Momentary) */}
+                    <div className="flex items-center gap-1">
+                        <span className={`w-6 h-6 border flex items-center justify-center rounded text-[10px] transition-colors ${hasVibrato ? 'bg-white/20 border-white text-white' : 'border-white/30 text-white/80'}`}>;</span>
                         <span className="text-[9px] text-white/60">VIB</span>
                     </div>
+
+                    {/* REVERB (Toggle) */}
                     <div className="flex items-center gap-1">
-                        <span className={`w-6 h-6 border flex items-center justify-center rounded text-[10px] transition-colors ${hasReverb ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-white/30 text-white/80'}`}>V</span>
+                        <span className={`w-6 h-6 border flex items-center justify-center rounded text-[10px] transition-colors ${hasReverb ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-white/30 text-white/80'}`}>'</span>
                         <span className={`text-[9px] ${hasReverb ? 'text-green-400' : 'text-white/60'}`}>REV</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                        <span className="w-6 h-6 border border-white/30 flex items-center justify-center rounded text-[10px] text-white/80">Z</span>
-                        <span className="text-[9px] text-white/60">FILT</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                        <span className="w-6 h-6 border border-white/30 flex items-center justify-center rounded text-[10px] text-white/80">X</span>
-                        <span className="text-[9px] text-white/60">DIST</span>
                     </div>
                 </div>
              </div>

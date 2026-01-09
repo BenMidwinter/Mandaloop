@@ -1,4 +1,3 @@
-// ... (Keep Imports and Constants SCALES / CHORD_MODES exactly as they are) ...
 import { SynthConfig } from '../types';
 
 export const SCALES: Record<string, number[]> = {
@@ -28,7 +27,6 @@ export const CHORD_MODES: Record<string, number[]> = {
 };
 
 class Voice {
-  // ... (Keep properties exactly as they are) ...
   public osc1: OscillatorNode;
   public osc2: OscillatorNode;
   public filter: BiquadFilterNode;
@@ -55,23 +53,22 @@ class Voice {
 
     // --- OSCILLATORS ---
     this.osc1 = ctx.createOscillator();
-    this.osc1.type = config.osc1Type;
+    this.osc1.type = config.osc1Type || 'sine';
     this.osc1.frequency.value = freq;
 
     this.osc2 = ctx.createOscillator();
-    this.osc2.type = config.osc2Type;
+    this.osc2.type = config.osc2Type || 'triangle';
     this.osc2.frequency.value = freq; 
     this.osc2.detune.value = 5; 
 
     // --- LFO ---
     this.lfo = ctx.createOscillator();
-    this.lfo.frequency.value = config.vibratoSpeed;
+    this.lfo.frequency.value = config.vibratoSpeed || 6;
     this.lfoGain = ctx.createGain();
     
-    // START GENTLE: If vibrato is on, start at 0 and ramp up (The Cello Swell)
     this.lfoGain.gain.setValueAtTime(0, t);
     if (activeEffects.includes('vibrato')) {
-        this.lfoGain.gain.setTargetAtTime(config.vibratoDepth * 5, t, 0.6); // 0.6s Fade In
+        this.lfoGain.gain.setTargetAtTime((config.vibratoDepth || 0) * 5, t, 0.6); 
     }
     
     this.lfo.connect(this.lfoGain);
@@ -82,12 +79,12 @@ class Voice {
     // --- FILTER ---
     this.filter = ctx.createBiquadFilter();
     this.filter.type = 'lowpass';
-    this.filter.Q.value = config.filterQ;
-    const targetFreq = activeEffects.includes('filter_close') ? 400 : config.filterFreq;
+    this.filter.Q.value = config.filterQ || 1;
+    const targetFreq = activeEffects.includes('filter_close') ? 400 : (config.filterFreq || 2000);
     
     this.filter.frequency.setValueAtTime(targetFreq, t);
     if (!activeEffects.includes('filter_close')) {
-        this.filter.frequency.exponentialRampToValueAtTime(targetFreq * 0.5, t + config.decay);
+        this.filter.frequency.exponentialRampToValueAtTime(Math.max(100, targetFreq * 0.5), t + config.decay);
     }
 
     // --- DISTORTION ---
@@ -99,7 +96,7 @@ class Voice {
     this.amp = ctx.createGain();
     this.amp.gain.setValueAtTime(0, t);
     this.amp.gain.linearRampToValueAtTime(0.5, t + config.attack); 
-    this.amp.gain.exponentialRampToValueAtTime(config.sustain * 0.5, t + config.attack + config.decay);
+    this.amp.gain.exponentialRampToValueAtTime(Math.max(0.01, config.sustain * 0.5), t + config.attack + config.decay);
 
     // --- REVERB SEND ---
     this.reverbSend = ctx.createGain();
@@ -132,39 +129,45 @@ class Voice {
   public updateEffects(activeEffects: string[]) {
       const t = this.ctx.currentTime;
       
-      const targetFreq = activeEffects.includes('filter_close') ? 400 : this.config.filterFreq;
+      const targetFreq = activeEffects.includes('filter_close') ? 400 : (this.config.filterFreq || 2000);
       this.filter.frequency.setTargetAtTime(targetFreq, t, 0.1);
 
       this.distortion.curve = activeEffects.includes('distort') ? this.makeDistortionCurve(50) : null;
 
       this.reverbSend.gain.setTargetAtTime(activeEffects.includes('reverb_max') ? 0.8 : 0.0, t, 0.5);
 
-      // FIXED: Slower ramp for Cello-like vibrato (0.6s)
-      this.lfoGain.gain.setTargetAtTime(activeEffects.includes('vibrato') ? this.config.vibratoDepth * 5 : 0, t, 0.6);
+      this.lfoGain.gain.setTargetAtTime(activeEffects.includes('vibrato') ? (this.config.vibratoDepth || 0) * 5 : 0, t, 0.6);
   }
 
   public release() {
     const t = this.ctx.currentTime;
-    const { release } = this.config;
+    const release = this.config.release || 0.1;
     
-    this.amp.gain.cancelScheduledValues(t);
-    this.amp.gain.setValueAtTime(this.amp.gain.value, t);
-    this.amp.gain.exponentialRampToValueAtTime(0.001, t + release);
-    
-    this.osc1.stop(t + release + 0.1);
-    this.osc2.stop(t + release + 0.1);
-    this.lfo.stop(t + release + 0.1);
-    
-    setTimeout(() => {
-        this.osc1.disconnect();
-        this.osc2.disconnect();
-        this.filter.disconnect();
-        this.distortion.disconnect();
-        this.amp.disconnect();
-        this.reverbSend.disconnect();
-        this.lfo.disconnect();
-        this.lfoGain.disconnect();
-    }, (release + 0.2) * 1000);
+    // Safety check for already disconnected nodes
+    try {
+        this.amp.gain.cancelScheduledValues(t);
+        this.amp.gain.setValueAtTime(this.amp.gain.value, t);
+        this.amp.gain.exponentialRampToValueAtTime(0.001, t + release);
+        
+        this.osc1.stop(t + release + 0.1);
+        this.osc2.stop(t + release + 0.1);
+        this.lfo.stop(t + release + 0.1);
+        
+        setTimeout(() => {
+            try {
+                this.osc1.disconnect();
+                this.osc2.disconnect();
+                this.filter.disconnect();
+                this.distortion.disconnect();
+                this.amp.disconnect();
+                this.reverbSend.disconnect();
+                this.lfo.disconnect();
+                this.lfoGain.disconnect();
+            } catch (e) { /* ignore cleanup errors */ }
+        }, (release + 0.2) * 1000);
+    } catch(e) {
+        console.warn("Audio cleanup warning:", e);
+    }
   }
 }
 
@@ -178,7 +181,8 @@ export class AudioEngine {
 
   public init() {
     if (this.ctx) return;
-    this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const AudioContextClass = (window.AudioContext || (window as any).webkitAudioContext);
+    this.ctx = new AudioContextClass();
     
     this.masterGain = this.ctx.createGain();
     this.masterGain.gain.value = 0.4;
@@ -212,9 +216,18 @@ export class AudioEngine {
 
   public getFreq(base: number, scaleName: string, index: number): number {
     const scale = SCALES[scaleName] || SCALES['pentatonic_major'];
-    const oct = Math.floor(index / scale.length);
-    const degree = index % scale.length;
-    const semitones = (oct * 12) + scale[degree];
+    if (!scale || scale.length === 0) return base;
+
+    const scaleLen = scale.length;
+    // Calculate Octave
+    const oct = Math.floor(index / scaleLen);
+    // Calculate Degree (Safe Modulo)
+    const degree = Math.abs(index % scaleLen);
+    
+    // Safety: Clamp degree
+    const safeDegree = Math.min(degree, scaleLen - 1);
+    
+    const semitones = (oct * 12) + scale[safeDegree];
     return base * Math.pow(2, semitones / 12);
   }
 
@@ -228,7 +241,14 @@ export class AudioEngine {
         this.noteOff(userId, noteIndex);
     }
 
-    const voice = new Voice(this.ctx, this.compressor!, this.reverbNode!, freq, config, activeEffects);
+    // Safety Fallback for config
+    const safeConfig = config || { 
+        osc1Type: 'sine', osc2Type: 'triangle', 
+        attack: 0.1, decay: 0.1, sustain: 0.5, release: 0.5,
+        filterFreq: 1000, filterQ: 1, vibratoSpeed: 5, vibratoDepth: 0
+    };
+
+    const voice = new Voice(this.ctx, this.compressor!, this.reverbNode!, freq, safeConfig, activeEffects || []);
     this.activeVoices.set(id, voice);
   }
 
@@ -246,7 +266,7 @@ export class AudioEngine {
     
     this.activeVoices.forEach((voice, key) => {
         if (key.startsWith(`${userId}_`)) {
-            voice.updateEffects(activeEffects);
+            voice.updateEffects(activeEffects || []);
         }
     });
   }

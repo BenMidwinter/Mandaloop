@@ -1,5 +1,5 @@
 import { initializeApp, FirebaseApp } from 'firebase/app';
-import { getDatabase, ref, push, onChildAdded, onChildRemoved, onDisconnect, set, remove, Database, DatabaseReference } from 'firebase/database'; // Added onChildRemoved
+import { getDatabase, ref, push, onChildAdded, onChildRemoved, onDisconnect, set, remove, Database, DatabaseReference } from 'firebase/database';
 import { SignalMessage, MessageType, UserState, NotePayload } from '../types';
 
 const firebaseConfig = {
@@ -38,6 +38,7 @@ export class CommsService {
     this.onMessageCallback = onMessage;
     
     // References
+    const roomRef = ref(this.db, `rooms/${roomId}`);
     this.eventsRef = ref(this.db, `rooms/${roomId}/events`);
     this.usersRef = ref(this.db, `rooms/${roomId}/users`);
 
@@ -56,7 +57,7 @@ export class CommsService {
       }
     });
 
-    // Handle Presence (User Joined)
+    // Handle Presence (Users List) - JOIN
     onChildAdded(this.usersRef, (snapshot) => {
        const rawUser = snapshot.val() as Partial<UserState>;
        
@@ -78,15 +79,16 @@ export class CommsService {
        }
     });
 
-    // Handle Presence (User Left) - NEW LISTENER
+    // Handle Presence - LEAVE (The Ghost Killer)
     onChildRemoved(this.usersRef, (snapshot) => {
-        const userId = snapshot.key;
-        if (userId && this.onMessageCallback) {
+        const rawUser = snapshot.val();
+        if (this.onMessageCallback && rawUser && rawUser.id) {
             this.onMessageCallback({
                 type: 'LEAVE',
                 roomId: this.roomId,
-                payload: null,
-                senderId: userId
+                payload: { id: rawUser.id },
+                senderId: rawUser.id,
+                timestamp: Date.now()
             });
         }
     });
@@ -123,13 +125,16 @@ export class CommsService {
   public send(type: MessageType, payload: any, senderId: string) {
     if (!this.eventsRef || !this.db) return;
 
+    // If it's a JOIN event, persist user & set the "Dead Man's Switch"
     if (type === 'JOIN') {
         this.localUserId = senderId;
         if (this.usersRef) {
             const userRef = ref(this.db, `rooms/${this.roomId}/users/${senderId}`);
-            set(userRef, payload);
-            // Remove user on disconnect (Presence system)
+            // MAGIC LINE: If I disconnect (close tab/crash), remove me from DB automatically
             onDisconnect(userRef).remove();
+            set(userRef, payload);
+            
+            
         }
     }
 

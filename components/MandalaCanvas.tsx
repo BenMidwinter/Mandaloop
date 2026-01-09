@@ -13,8 +13,8 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
   // Helper to draw specific geometric shapes
   const drawShape = (ctx: CanvasRenderingContext2D, x: number, y: number, size: number, type: number, filled: boolean) => {
     ctx.beginPath();
-    // Use note index (type) to determine shape
-    const shapeType = type % 4;
+    // INCREASED MODULO TO 5 to include the new Ace shape
+    const shapeType = type % 5;
     
     if (shapeType === 0) {
         // Circle
@@ -42,6 +42,18 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
             else ctx.lineTo(px, py);
         }
         ctx.closePath();
+    } else if (shapeType === 4) {
+        // NEW SHAPE: The Ace (Stylized Spade)
+        // A triangle pointing up with a wider base
+        ctx.moveTo(x, y - size); // Top Tip
+        ctx.bezierCurveTo(x + size, y - size/2, x + size, y + size/2, x, y + size/2); // Right Curve
+        ctx.bezierCurveTo(x - size, y + size/2, x - size, y - size/2, x, y - size); // Left Curve
+        
+        // The Stem
+        ctx.moveTo(x, y + size/2);
+        ctx.lineTo(x + size/4, y + size);
+        ctx.lineTo(x - size/4, y + size);
+        ctx.lineTo(x, y + size/2);
     }
 
     if (filled) {
@@ -69,9 +81,6 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
     const sliceAngle = (Math.PI * 2) / users.length;
     
     // Determine radial symmetry count based on user count
-    // If 1 user: 12 repetitions (Full Mandala)
-    // If 2 users: 6 repetitions each (Split Mandala)
-    // If 3 users: 4 repetitions each
     const symmetryPerUser = Math.max(1, Math.floor(12 / users.length));
     const angleStep = sliceAngle / symmetryPerUser;
 
@@ -80,11 +89,9 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
       
       const userStartAngle = i * sliceAngle;
       
-      // Safety defaults: Firebase might return undefined for empty arrays
       const activeEffects = user.activeEffects || [];
       const activeNotes = user.activeNotes || [];
 
-      // Safe includes check
       const hasVibrato = activeEffects.includes('vibrato');
       const hasFilter = activeEffects.includes('filter_close');
       const hasDistort = activeEffects.includes('distort');
@@ -101,9 +108,10 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
       }
 
       activeNotes.forEach(noteIndex => {
-        // Map note to radius (Inner -> Outer)
-        const radiusStep = maxRadius / 15;
-        const baseRadius = (noteIndex + 1) * radiusStep;
+        // UPDATED: Adjusted for 3 Octaves (Range 0-21)
+        // Divide by 24 so the highest notes don't fall off the edge
+        const radiusStep = maxRadius / 24; 
+        const baseRadius = (noteIndex + 2) * radiusStep; // Start slightly further out (center hole)
         
         let radius = baseRadius;
         if (hasVibrato) {
@@ -128,28 +136,26 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme }) => {
 
         // Draw Symmetry Repetitions
         for (let s = 0; s < symmetryPerUser; s++) {
-            // Calculate center of this repetition
-            // We center the shape within its mini-slice
             const currentAngle = userStartAngle + (s * angleStep) + (angleStep / 2);
             
             const x = centerX + Math.cos(currentAngle) * radius;
             const y = centerY + Math.sin(currentAngle) * radius;
 
-            // Rotation of the shape itself (points towards center)
             ctx.save();
             ctx.translate(x, y);
-            ctx.rotate(currentAngle + Math.PI/2); // Align shape with radius
+            ctx.rotate(currentAngle + Math.PI/2); 
 
-            // Size varies with note pitch (lower notes = larger shapes, higher = smaller)
-            const size = Math.max(4, 15 - (noteIndex * 0.8));
+            // UPDATED SIZE LOGIC:
+            // Base size is 22 (bigger).
+            // Shrinks slower (0.6 multiplier).
+            // Minimum size is 8 (never disappears).
+            const size = Math.max(8, 22 - (noteIndex * 0.6));
             
-            // Draw
-            drawShape(ctx, 0, 0, size, noteIndex, !hasDistort); // Distort makes it wireframe
+            drawShape(ctx, 0, 0, size, noteIndex, !hasDistort); 
             
             ctx.restore();
         }
 
-        // Reset global alpha
         ctx.globalAlpha = 1;
       });
     });
