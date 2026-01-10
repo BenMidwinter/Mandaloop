@@ -28,7 +28,7 @@ const themeSchema: Schema = {
     
     // We add KEY and EXPLANATION here so the frontend can snap the synth
     key: { type: SchemaType.STRING, description: "Musical Key (e.g. C, F#, Bb)" },
-    scale: { type: SchemaType.STRING, description: `Must be one of: ${VALID_SCALES.join(', ')}` },
+    scale: { type: SchemaType.STRING, description: "The musical scale pattern. CRITICAL: Return the scale name ONLY. Do NOT include a root note or key. Correct: 'dorian'. Incorrect: 'C Dorian'. Incorrect: 'Dorian Mode'." },
     explanation: { type: SchemaType.STRING },
 
     synthConfig: {
@@ -82,62 +82,85 @@ export const generateMandalaTheme = onCall({ secrets: ["GEMINI_API_KEY"] }, asyn
           - Colors must be NEON and HIGH VISIBILITY. 
           - Do NOT use black, dark gray, or dark blue.
           
-          MUSICAL RULES:
+       MUSICAL RULES:
           - The 'scale' field must be exactly one of: ${VALID_SCALES.join(', ')}.
-          - Do NOT invent scales (e.g. do not use "Dominant Phrygian", "Lydian #2").
-          - If you want a dominant sound, pick 'harmonic_minor' or 'phrygian'.
-          - If the user asks for "Locrian", you MUST set scale: "locrian".
+          - STRICTLY FORBIDDEN: Do not include a root note (e.g. "C", "F#").
+          - STRICTLY FORBIDDEN: Do not add the word "Mode" or "Scale".
+          - Correct: "dorian". 
+          - Incorrect: "C Dorian", "Dorian Mode", "Dorian Scale".
         `;
 
         const result = await model.generateContent(fullPrompt);
         const data = JSON.parse(result.response.text());
 
-   // --- STEP 1: SCALE SANITIZATION & TRANSLATION ---
-        let rawScale = data.scale || "";
+   // --- STEP 1: ROBUST KEYWORD SCANNER ---
+        // We convert to lowercase. 
+        // This naturally strips root notes because we aren't checking for them.
+        // "C Dorian" becomes "c dorian". We look for "dorian". It matches.
         
-        // NEW: "De-Fluffing" - Remove noise words like "mode", "scale"
-        // e.g., "Locrian Mode" -> "locrian"
-        let cleanScale = rawScale.toLowerCase()
-            .replace(" mode", "")
-            .replace(" scale", "")
-            .replace(" key", "")
-            .trim()
-            .replace(/\s+/g, "_");
+        let rawScale = (data.scale || "").toLowerCase();
+        let finalScale = 'pentatonic_major'; // The ultimate safety net
 
-        // Common AI Hallucination Fixes (Keep existing ones)
-        if (cleanScale.includes('dominant_phrygian')) cleanScale = 'phrygian'; 
-        if (cleanScale.includes('phrygian_dominant')) cleanScale = 'phrygian';
-        if (cleanScale.includes('mixolydian_b6')) cleanScale = 'minor'; 
-        if (cleanScale === 'major_pentatonic') cleanScale = 'pentatonic_major';
-        if (cleanScale === 'minor_pentatonic') cleanScale = 'pentatonic_minor';
+        // 1. Check for Complex/Specific Scales first
+        if (rawScale.includes('pentatonic')) {
+            // Catches: "Minor Pentatonic", "Eb Minor Pentatonic"
+            if (rawScale.includes('minor')) finalScale = 'pentatonic_minor';
+            else finalScale = 'pentatonic_major';
+        }
+        else if (rawScale.includes('harmonic') && rawScale.includes('minor')) {
+            finalScale = 'harmonic_minor';
+        }
+        else if (rawScale.includes('whole')) {
+            finalScale = 'whole_tone';
+        }
+        else if (rawScale.includes('chromatic')) {
+            finalScale = 'chromatic';
+        }
+        else if (rawScale.includes('hirajoshi')) {
+            finalScale = 'hirajoshi';
+        }
+        else if (rawScale.includes('pelog')) {
+            finalScale = 'pelog';
+        }
+        
+        // 2. Check for Modes
+        // CRITICAL: Check Mixolydian BEFORE Lydian, as "mixolydian" contains "lydian"
+        else if (rawScale.includes('mixolydian')) {
+             finalScale = 'mixolydian';
+        }
+        else if (rawScale.includes('lydian')) {
+            finalScale = 'lydian';
+        }
+        else if (rawScale.includes('dorian')) {
+            finalScale = 'dorian';
+        }
+        else if (rawScale.includes('phrygian')) {
+            finalScale = 'phrygian';
+        }
+        else if (rawScale.includes('locrian')) {
+            finalScale = 'locrian';
+        }
+        
+        // 3. Basic Major/Minor (The Catch-Alls)
+        // Check these LAST. "Pentatonic Major" contains "major", so we must 
+        // rule out Pentatonic (Step 1) before checking for plain Major.
+        else if (rawScale.includes('minor')) {
+            finalScale = 'minor';
+        }
+        else if (rawScale.includes('major')) {
+            finalScale = 'major';
+        }
 
-        // --- STEP 2: THE BOUNCER ---
-        if (VALID_SCALES.includes(cleanScale)) {
-            data.scale = cleanScale;
-        } else {
-            console.warn(`AI Scale Mismatch: '${rawScale}' -> '${cleanScale}'. Attempting smart fallback.`);
-            
-            // Fuzzy Matching (Order matters! Complex scales first)
-            if (cleanScale.includes('locrian')) data.scale = 'locrian';
-            else if (cleanScale.includes('harmonic')) data.scale = 'harmonic_minor';
-            else if (cleanScale.includes('dorian')) data.scale = 'dorian';
-            else if (cleanScale.includes('phrygian')) data.scale = 'phrygian';
-            else if (cleanScale.includes('lydian') && !cleanScale.includes('mixo')) data.scale = 'lydian';
-            else if (cleanScale.includes('mixolydian')) data.scale = 'mixolydian';
-            else if (cleanScale.includes('whole')) data.scale = 'whole_tone';
-            else if (cleanScale.includes('chromatic')) data.scale = 'chromatic';
-            else if (cleanScale.includes('pelog')) data.scale = 'pelog';
-            else if (cleanScale.includes('hirajoshi')) data.scale = 'hirajoshi';
-            else if (cleanScale.includes('minor')) data.scale = 'pentatonic_minor';
-            else if (cleanScale.includes('major')) data.scale = 'pentatonic_major';
-            else {
-                // If it fails completely, try to rescue it based on the description
-                const desc = (data.explanation || "").toLowerCase();
-                if (desc.includes('locrian')) data.scale = 'locrian';
-                else if (desc.includes('dreamy')) data.scale = 'whole_tone';
-                else if (desc.includes('middle east')) data.scale = 'harmonic_minor';
-                else data.scale = 'pentatonic_minor'; // Ultimate fallback
-            }
+        // Apply the detected scale
+        console.log(`AI Scale: "${data.scale}" -> Detected: "${finalScale}"`);
+        data.scale = finalScale;
+
+        // --- STEP 2: SAFETY CHECK ---
+        // If the AI hallucinated something totally wild like "Bebop Blues",
+        // none of the above ifs will trigger, and it stays 'pentatonic_major'.
+        // This block ensures we only pass valid keys to the frontend.
+        if (!VALID_SCALES.includes(data.scale)) {
+            data.scale = 'pentatonic_major';
         }
 
         // --- STEP 3: COLOR BOOSTER (Fixing "Too Dark") ---

@@ -4,7 +4,7 @@ import { Theme } from "../types";
 // Note: The 'themeSchema' is no longer needed here because the 
 // backend now handles the strict JSON structure.
 
-export const generateTheme = async (prompt: string, seed?: string): Promise<Theme> => {
+export const generateMandalaTheme = async (prompt: string, seed?: string): Promise<Theme> => {
   try {
     console.log("Requesting theme from secure backend...");
 

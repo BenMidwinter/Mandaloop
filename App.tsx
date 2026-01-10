@@ -5,6 +5,8 @@ import Lobby from './components/Lobby';
 import { Theme, UserState, SignalMessage, NotePayload } from './types';
 import { audioEngine, CHORD_MODES, VALID_SCALES } from './services/audioEngine';
 import { comms } from './services/commsService';
+// --- NEW IMPORT ---
+import { generateMandalaTheme } from './services/geminiService';
 
 const DEFAULT_THEME: Theme = {
   name: "Deep Space",
@@ -29,10 +31,8 @@ const DEFAULT_THEME: Theme = {
 const NOTE_KEYS: Record<string, number> = {
   // Octave 1 (Bottom Row) - Low
   'z': 0, 'x': 1, 'c': 2, 'v': 3, 'b': 4, 'n': 5, 'm': 6,
-  
   // Octave 2 (Middle Row) - Mid
   's': 7, 'd': 8, 'f': 9, 'g': 10, 'h': 11, 'j': 12, 'k': 13,
-  
   // Octave 3 (Top Row) - High
   'e': 14, 'r': 15, 't': 16, 'y': 17, 'u': 18, 'i': 19, 'o': 20, 'p': 21
 };
@@ -46,27 +46,15 @@ const EFFECT_KEYS: Record<string, string> = {
 
 const MAX_POLYPHONY = 24;
 
-// Add this just before the App component definition
-const getFreqFromKey = (keyName: string): number => {
-    const map: Record<string, number> = {
-        'C': 130.81, 'C#': 138.59, 'Db': 138.59,
-        'D': 146.83, 'D#': 155.56, 'Eb': 155.56,
-        'E': 164.81,
-        'F': 174.61, 'F#': 185.00, 'Gb': 185.00,
-        'G': 196.00, 'G#': 207.65, 'Ab': 207.65,
-        'A': 220.00, 'A#': 233.08, 'Bb': 233.08,
-        'B': 246.94
-    };
-    // Default to C if AI hallucinates a non-key
-    return map[keyName] || 130.81; 
-};
-
 const App: React.FC = () => {
   const [isInLobby, setIsInLobby] = useState(true);
   const [localUser, setLocalUser] = useState<UserState | null>(null);
   const [remoteUsers, setRemoteUsers] = useState<UserState[]>([]);
   const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
+  
+  // --- STATE FOR THE LOCK ---
   const [isGenerating, setIsGenerating] = useState(false);
+  
   const [roomCode, setRoomCode] = useState('');
   
   const localIdRef = useRef<string | null>(null);
@@ -81,6 +69,36 @@ const App: React.FC = () => {
   useEffect(() => {
     if (localUser) localIdRef.current = localUser.id;
   }, [localUser]);
+
+  const handleThemeChange = (newTheme: Theme) => {
+    // FIX: Only clear the manual scale if the Theme Name has changed.
+    if (newTheme.name !== theme.name) {
+        setOverrideScale(''); 
+    }
+    setTheme(newTheme);
+    if (localUser) {
+        comms.send('SYNC_THEME', newTheme, localUser.id);
+    }
+  };
+
+  // --- NEW: THE SAFE GENERATE FUNCTION (The Lock) ---
+  const handleGenerate = async (prompt: string) => {
+    // 1. THE LOCK: Stop if already running
+    if (isGenerating) return;
+    
+    // 2. Lock the door
+    setIsGenerating(true); 
+
+    try {
+      const newTheme = await generateMandalaTheme(prompt);
+      handleThemeChange(newTheme);
+    } catch (error) {
+      console.error("Theme generation failed:", error);
+    } finally {
+      // 3. Unlock the door (Always, even if it fails)
+      setIsGenerating(false);
+    }
+  };
 
   const handleRemoteMessage = useCallback((msg: SignalMessage) => {
     if (localIdRef.current && msg.senderId === localIdRef.current) return;
@@ -107,7 +125,6 @@ const App: React.FC = () => {
         
       case 'NOTE_ON': {
         const { noteIndex } = msg.payload as NotePayload;
-        
         const sender = remoteUsers.find(u => u.id === msg.senderId);
         const senderEffects = sender ? sender.activeEffects : [];
 
@@ -172,8 +189,6 @@ const App: React.FC = () => {
   }, [handleRemoteMessage]);
 
   const joinRoom = (name: string, code: string) => {
-    // FIXED: Session Persistence (The Anti-Ghost Fix)
-    // Check if we already have an ID for this session
     let existingId = sessionStorage.getItem('mandaloop_userId');
     if (!existingId) {
         existingId = Math.random().toString(36).substr(2, 9);
@@ -181,7 +196,7 @@ const App: React.FC = () => {
     }
 
     const newUser: UserState = {
-      id: existingId, // Reuse ID so we overwrite our old ghost self
+      id: existingId, 
       name: name,
       colorIndex: Math.floor(Math.random() * 5),
       activeNotes: [],
@@ -209,7 +224,6 @@ const App: React.FC = () => {
   useEffect(() => {
     if (isInLobby || !localUser) return;
 
-    // Define which effects should stick (Latch) vs which are momentary
     const TOGGLE_EFFECTS = ['reverb_max', 'filter_close', 'distort'];
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -218,7 +232,6 @@ const App: React.FC = () => {
 
       const key = e.key.toLowerCase(); 
 
-      // --- NOTE LOGIC (Unchanged) ---
       if (NOTE_KEYS.hasOwnProperty(key)) {
         const baseIndex = NOTE_KEYS[key];
         if ((localUser.activeNotes || []).length >= MAX_POLYPHONY) return;
@@ -243,24 +256,21 @@ const App: React.FC = () => {
         });
       }
 
-      // --- NEW EFFECT LOGIC (Multi-Toggle) ---
       if (EFFECT_KEYS.hasOwnProperty(key)) {
         const effect = EFFECT_KEYS[key];
         const isToggle = TOGGLE_EFFECTS.includes(effect);
 
         if (isToggle) {
-            // TOGGLE LOGIC: Flip the state
             const isActive = localUser.activeEffects.includes(effect);
             const newEffects = isActive 
-                ? localUser.activeEffects.filter(e => e !== effect) // Remove
-                : [...localUser.activeEffects, effect];             // Add
+                ? localUser.activeEffects.filter(e => e !== effect) 
+                : [...localUser.activeEffects, effect];             
                 
             setLocalUser({ ...localUser, activeEffects: newEffects });
             comms.send('EFFECT_CHANGE', { effect, active: !isActive }, localUser.id);
             audioEngine.updateUserEffects(localUser.id, newEffects);
         } 
         else {
-            // MOMENTARY LOGIC (Vibrato): Only add if not present
             if (!localUser.activeEffects.includes(effect)) {
                 const newEffects = [...localUser.activeEffects, effect];
                 setLocalUser({ ...localUser, activeEffects: newEffects });
@@ -274,7 +284,6 @@ const App: React.FC = () => {
     const handleKeyUp = (e: KeyboardEvent) => {
         const key = e.key.toLowerCase();
 
-        // --- NOTE OFF LOGIC (Unchanged) ---
         if (NOTE_KEYS.hasOwnProperty(key)) {
             const baseIndex = NOTE_KEYS[key];
             const intervals = CHORD_MODES[activeChordMode] || [0];
@@ -290,16 +299,12 @@ const App: React.FC = () => {
             });
         }
 
-        // --- NEW EFFECT RELEASE LOGIC ---
         if (EFFECT_KEYS.hasOwnProperty(key)) {
             const effect = EFFECT_KEYS[key];
             const isToggle = TOGGLE_EFFECTS.includes(effect);
 
-            // If it's a toggle (Filter/Distort/Reverb), IGNORE key release.
-            // You have to press the key again to turn it off.
             if (isToggle) return; 
 
-            // If it's Momentary (Vibrato), turn it off now.
             const newEffects = localUser.activeEffects.filter(eff => eff !== effect);
             setLocalUser(prev => {
                 if (!prev) return prev;
@@ -319,21 +324,6 @@ const App: React.FC = () => {
     };
   }, [isInLobby, localUser, theme, effectiveScale, activeChordMode]);
 
-
-const handleThemeChange = (newTheme: Theme) => {
-    // FIX: Only clear the manual scale if the Theme Name has changed.
-    // This allows you to tweak synth knobs (same theme name) without resetting your scale.
-    if (newTheme.name !== theme.name) {
-        setOverrideScale(''); 
-    }
-
-    setTheme(newTheme);
-    
-    if (localUser) {
-        comms.send('SYNC_THEME', newTheme, localUser.id);
-    }
-  };
-  
   const handleScaleChange = (newScale: string) => {
       setOverrideScale(newScale);
       if (localUser) {
@@ -345,13 +335,11 @@ const handleThemeChange = (newTheme: Theme) => {
     return <Lobby onJoin={joinRoom} />;
   }
 
-// Check which effects are currently ON
   const activeFx = localUser?.activeEffects || [];
   const hasReverb = activeFx.includes('reverb_max');
   const hasFilter = activeFx.includes('filter_close');
   const hasDistort = activeFx.includes('distort');
-  const hasVibrato = activeFx.includes('vibrato'); // Just for visual feedback while holding
-
+  const hasVibrato = activeFx.includes('vibrato'); 
 
   return (
     <div className="w-full h-screen bg-black overflow-hidden relative selection:bg-none">
@@ -363,8 +351,10 @@ const handleThemeChange = (newTheme: Theme) => {
         onRemoveUser={() => {}} 
         currentTheme={theme}
         onThemeChange={handleThemeChange}
+        // --- NEW: Pass the Locked Generate Function ---
+        onGenerate={handleGenerate} 
         isGenerating={isGenerating}
-        setIsGenerating={setIsGenerating}
+        // Removed: setIsGenerating={setIsGenerating} (Controls shouldn't set this directly anymore)
         roomCode={roomCode}
         setRoomCode={() => {}} 
         activeChordMode={activeChordMode}
@@ -376,22 +366,17 @@ const handleThemeChange = (newTheme: Theme) => {
       {/* Footer / Key Guide */}
       <div className="absolute bottom-6 left-0 right-0 flex justify-center pointer-events-none">
          <div className="flex gap-8 items-center bg-black/60 backdrop-blur-md px-6 py-3 rounded-xl border border-white/10 shadow-2xl">
-             
-             {/* NOTES SECTION */}
              <div className="flex flex-col gap-1 border-r border-white/10 pr-6">
-                {/* Top Row (High) */}
                 <div className="flex gap-1 justify-center">
                     {['E','R','T','Y','U','I','O','P'].map(k => (
                         <span key={k} className="w-6 h-6 border border-white/30 flex items-center justify-center rounded text-[10px] text-white/80 bg-white/5">{k}</span>
                     ))}
                 </div>
-                {/* Middle Row (Mid) */}
-                <div className="flex gap-1 justify-center ml-2"> {/* ml-2 creates the keyboard 'stagger' look */}
+                <div className="flex gap-1 justify-center ml-2"> 
                     {['S','D','F','G','H','J','K'].map(k => (
                         <span key={k} className="w-6 h-6 border border-white/30 flex items-center justify-center rounded text-[10px] text-white/80 bg-white/5">{k}</span>
                     ))}
                 </div>
-                {/* Bottom Row (Low) */}
                 <div className="flex gap-1 justify-center ml-4">
                     {['Z','X','C','V','B','N','M'].map(k => (
                         <span key={k} className="w-6 h-6 border border-white/30 flex items-center justify-center rounded text-[10px] text-white/80 bg-white/5">{k}</span>
@@ -399,29 +384,21 @@ const handleThemeChange = (newTheme: Theme) => {
                 </div>
              </div>
 
-             {/* FX SECTION */}
              <div className="flex gap-4 items-center">
                 <div className="text-[10px] text-white/50 font-mono tracking-widest writing-vertical">FX</div>
                 <div className="grid grid-cols-2 gap-2">
-                    {/* FILTER (Toggle) */}
                     <div className="flex items-center gap-1">
                         <span className={`w-6 h-6 border flex items-center justify-center rounded text-[10px] transition-colors ${hasFilter ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-white/30 text-white/80'}`}>[</span>
                         <span className={`text-[9px] ${hasFilter ? 'text-green-400' : 'text-white/60'}`}>FILT</span>
                     </div>
-
-                    {/* DISTORTION (Toggle) */}
                     <div className="flex items-center gap-1">
                         <span className={`w-6 h-6 border flex items-center justify-center rounded text-[10px] transition-colors ${hasDistort ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-white/30 text-white/80'}`}>]</span>
                         <span className={`text-[9px] ${hasDistort ? 'text-green-400' : 'text-white/60'}`}>DIST</span>
                     </div>
-
-                    {/* VIBRATO (Momentary) */}
                     <div className="flex items-center gap-1">
                         <span className={`w-6 h-6 border flex items-center justify-center rounded text-[10px] transition-colors ${hasVibrato ? 'bg-white/20 border-white text-white' : 'border-white/30 text-white/80'}`}>;</span>
                         <span className="text-[9px] text-white/60">TREM</span>
                     </div>
-
-                    {/* REVERB (Toggle) */}
                     <div className="flex items-center gap-1">
                         <span className={`w-6 h-6 border flex items-center justify-center rounded text-[10px] transition-colors ${hasReverb ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-white/30 text-white/80'}`}>'</span>
                         <span className={`text-[9px] ${hasReverb ? 'text-green-400' : 'text-white/60'}`}>REV</span>

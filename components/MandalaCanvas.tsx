@@ -93,7 +93,15 @@ const MandalaCanvas: React.FC<MandalaCanvasProps> = ({ users, theme, scaleType }
             const staggerRotation = isOddLayer ? (currentAngleStep / 2) : 0;
 
             // Safety Color
-            const color = (theme.colors && theme.colors[noteIndex % theme.colors.length]) || '#FFFFFF';
+        // --- SAFETY COLOR LOGIC ---
+            // 1. Check if we actually have a colors array
+            const hasColors = theme.colors && theme.colors.length > 0;
+            
+            // 2. Safe Modulo: If no colors, default to 0 to avoid NaN
+            const safeIndex = hasColors ? noteIndex % theme.colors.length : 0;
+            
+            // 3. Final Pickup: Get the color OR fallback to White
+            const color = hasColors ? theme.colors[safeIndex] : '#FFFFFF';
             ctx.fillStyle = color;
             ctx.globalAlpha = hasFilter ? 0.2 : 0.4; 
             ctx.shadowBlur = 0;

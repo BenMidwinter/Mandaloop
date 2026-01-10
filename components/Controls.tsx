@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { Theme, SynthConfig } from '../types';
-import { generateTheme } from '../services/geminiService';
 import { SCALES, CHORD_MODES } from '../services/audioEngine';
 
 interface ControlsProps {
@@ -9,8 +8,12 @@ interface ControlsProps {
   onRemoveUser: () => void;
   onThemeChange: (theme: Theme) => void;
   currentTheme: Theme;
+  
+  // --- NEW: Receive the Locked Function ---
+  onGenerate: (prompt: string) => Promise<void>;
   isGenerating: boolean;
-  setIsGenerating: (v: boolean) => void;
+  // Note: We removed setIsGenerating setter. App.tsx controls the state now.
+
   roomCode: string;
   setRoomCode: (code: string) => void;
   activeChordMode: string;
@@ -23,8 +26,8 @@ const Controls: React.FC<ControlsProps> = ({
   userCount,
   onThemeChange,
   currentTheme,
+  onGenerate, // <--- Use this instead of fetching directly
   isGenerating,
-  setIsGenerating,
   roomCode,
   activeChordMode,
   setActiveChordMode,
@@ -35,44 +38,22 @@ const Controls: React.FC<ControlsProps> = ({
   const [isOpen, setIsOpen] = useState(false); 
   const [showSynth, setShowSynth] = useState(false);
 
-  const handleGenerate = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isGenerating) return;
+
+    // 1. Prepare the prompt
     const finalPrompt = prompt.trim() || roomCode || "Cosmic Geometry";
 
-    setIsGenerating(true);
-    try {
-      // 1. Fetch the raw theme from AI
-      const newTheme = await generateTheme(finalPrompt, roomCode);
-      
-      // --- FIX: SANITIZE SCALE LOCALLY ---
-      // This protects us if the backend sends "Locrian" or "Major Pentatonic"
-      // We clean it to match 'audioEngine' keys exactly.
-      if (newTheme.scale) {
-          newTheme.scale = newTheme.scale.toLowerCase().trim().replace(/ /g, "_");
-          
-          // Extra safety mapping
-          if (newTheme.scale === 'major_pentatonic') newTheme.scale = 'pentatonic_major';
-          if (newTheme.scale === 'minor_pentatonic') newTheme.scale = 'pentatonic_minor';
-      }
-
-      // 2. Clear any manual override
-      // We want the AI's new scale to take effect, so we remove any user overrides.
-      setOverrideScale(""); 
-
-      // 3. Apply the Theme
-      // This sends the Clean Scale, Colors, and BaseFreq to App.tsx in one go.
-      onThemeChange(newTheme);
-
-      // --- REMOVED THE onAiApply BLOCK ---
-      // It was causing a race condition that reverted the theme.
-      
-      setShowSynth(true); 
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsGenerating(false);
-      if (prompt) setPrompt('');
-    }
+    // 2. Clear manual overrides so the new theme shines through
+    setOverrideScale(""); 
+    
+    // 3. Call the Parent (App.tsx) to handle the API call + Locking
+    await onGenerate(finalPrompt);
+    
+    // 4. Cleanup UI
+    setPrompt('');
+    setShowSynth(true); 
   };
 
   const handleSynthChange = (key: keyof SynthConfig, value: number) => {
@@ -94,6 +75,7 @@ const Controls: React.FC<ControlsProps> = ({
       onThemeChange(updatedTheme);
   };
 
+  // --- UI RENDER (Unchanged from your version) ---
   if (!isOpen) {
     return (
       <button 
@@ -156,7 +138,7 @@ const Controls: React.FC<ControlsProps> = ({
 
       <div className="mb-6">
         <label className="block text-white/50 mb-2 text-xs uppercase tracking-wider">Generate New Vibe</label>
-        <form onSubmit={handleGenerate} className="flex gap-2">
+        <form onSubmit={handleSubmit} className="flex gap-2">
             <input 
                 type="text" 
                 value={prompt}
