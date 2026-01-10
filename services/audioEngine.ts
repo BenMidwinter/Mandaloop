@@ -17,7 +17,7 @@ export const SCALES: Record<string, number[]> = {
   'hirajoshi': [0, 2, 3, 7, 8]
 };
 
-export const VALID_SCALES = Object.keys (SCALES);
+export const VALID_SCALES = Object.keys(SCALES);
 
 export const CHORD_MODES: Record<string, number[]> = {
     'Single': [0],
@@ -33,6 +33,7 @@ class Voice {
   public osc2: OscillatorNode;
   public filter: BiquadFilterNode;
   public distortion: WaveShaperNode;
+  public tremolo: GainNode; 
   public amp: GainNode;
   public lfo: OscillatorNode;
   public lfoGain: GainNode;
@@ -63,19 +64,33 @@ class Voice {
     this.osc2.frequency.value = freq; 
     this.osc2.detune.value = 5; 
 
-    // --- LFO ---
+    // --- LFO & TREMOLO (Initialized TOGETHER now) ---
     this.lfo = ctx.createOscillator();
-    this.lfo.frequency.value = config.vibratoSpeed || 6;
     this.lfoGain = ctx.createGain();
-    
-    this.lfoGain.gain.setValueAtTime(0, t);
-    if (activeEffects.includes('vibrato')) {
-        this.lfoGain.gain.setTargetAtTime((config.vibratoDepth || 0) * 5, t, 0.6); 
-    }
-    
+    this.tremolo = ctx.createGain(); // <--- MOVED UP: Initialized here so we can use it immediately
+
+    const rawDepth = config.vibratoDepth || 0;
+    const isActive = activeEffects.includes('vibrato');
+
+    // SPEED calculation
+    const speed = 3 + ((rawDepth / 30) * 5); 
+    this.lfo.frequency.value = speed;
+
+    // CELLO SWELL LOGIC
+    // 1. Calculate Target Depth
+    const targetDepth = isActive ? (rawDepth / 30) * 0.4 : 0;
+
+    // 2. Set Initial Values (Clean Attack)
+    this.lfoGain.gain.setValueAtTime(0, t);       // Start with NO shaking
+    this.tremolo.gain.setValueAtTime(1.0, t);     // Start with FULL volume
+
+    // 3. Ramp to Targets (Swell in the effect over 0.5s time constant)
+    this.lfoGain.gain.setTargetAtTime(targetDepth, t, 0.5); 
+    this.tremolo.gain.setTargetAtTime(1.0 - targetDepth, t, 0.5);
+
+    // 4. Connect LFO
     this.lfo.connect(this.lfoGain);
-    this.lfoGain.connect(this.osc1.frequency);
-    this.lfoGain.connect(this.osc2.frequency);
+    this.lfoGain.connect(this.tremolo.gain);
     this.lfo.start(t);
 
     // --- FILTER ---
@@ -104,11 +119,13 @@ class Voice {
     this.reverbSend = ctx.createGain();
     this.reverbSend.gain.value = activeEffects.includes('reverb_max') ? 0.8 : 0.0;
 
-    // --- ROUTING ---
+    // --- ROUTING CHAIN ---
+    // Osc -> Filter -> Distortion -> TREMOLO -> Amp -> Destination
     this.osc1.connect(this.filter);
     this.osc2.connect(this.filter);
     this.filter.connect(this.distortion);
-    this.distortion.connect(this.amp);
+    this.distortion.connect(this.tremolo); 
+    this.tremolo.connect(this.amp);        
     this.amp.connect(destination); 
     this.amp.connect(this.reverbSend); 
     this.reverbSend.connect(reverbDestination); 
@@ -138,14 +155,27 @@ class Voice {
 
       this.reverbSend.gain.setTargetAtTime(activeEffects.includes('reverb_max') ? 0.8 : 0.0, t, 0.5);
 
-      this.lfoGain.gain.setTargetAtTime(activeEffects.includes('vibrato') ? (this.config.vibratoDepth || 0) * 5 : 0, t, 0.6);
+      // --- TREMOLO UPDATE LOGIC ---
+      const isActive = activeEffects.includes('vibrato');
+      const rawDepth = this.config.vibratoDepth || 0;
+      
+      const speed = 3 + ((rawDepth / 30) * 5); 
+      const targetDepth = isActive ? (rawDepth / 30) * 0.4 : 0;
+
+      // Update Speed
+      this.lfo.frequency.setTargetAtTime(speed, t, 0.2);
+      
+      // Update Depth (Volume dip amount)
+      this.lfoGain.gain.setTargetAtTime(targetDepth, t, 0.2);
+      
+      // Update Base Volume (Lower it as depth increases to avoid clipping)
+      this.tremolo.gain.setTargetAtTime(1.0 - targetDepth, t, 0.2);
   }
 
   public release() {
     const t = this.ctx.currentTime;
     const release = this.config.release || 0.1;
     
-    // Safety check for already disconnected nodes
     try {
         this.amp.gain.cancelScheduledValues(t);
         this.amp.gain.setValueAtTime(this.amp.gain.value, t);
@@ -161,6 +191,7 @@ class Voice {
                 this.osc2.disconnect();
                 this.filter.disconnect();
                 this.distortion.disconnect();
+                this.tremolo.disconnect(); 
                 this.amp.disconnect();
                 this.reverbSend.disconnect();
                 this.lfo.disconnect();

@@ -1,10 +1,8 @@
-// ... (Imports stay same) ...
 import React, { useState } from 'react';
 import { Theme, SynthConfig } from '../types';
 import { generateTheme } from '../services/geminiService';
 import { SCALES, CHORD_MODES } from '../services/audioEngine';
 
-// ... (Interface stays same) ...
 interface ControlsProps {
   userCount: number;
   onAddUser: () => void;
@@ -19,7 +17,6 @@ interface ControlsProps {
   setActiveChordMode: (mode: string) => void;
   overrideScale: string;
   setOverrideScale: (scale: string) => void;
-  onAiApply?: (key: string, scale: string) => void;
 }
 
 const Controls: React.FC<ControlsProps> = ({
@@ -33,7 +30,6 @@ const Controls: React.FC<ControlsProps> = ({
   setActiveChordMode,
   overrideScale,
   setOverrideScale,
-  onAiApply
 }) => {
   const [prompt, setPrompt] = useState('');
   const [isOpen, setIsOpen] = useState(false); 
@@ -45,15 +41,31 @@ const Controls: React.FC<ControlsProps> = ({
 
     setIsGenerating(true);
     try {
+      // 1. Fetch the raw theme from AI
       const newTheme = await generateTheme(finalPrompt, roomCode);
-      onThemeChange(newTheme);
-      // --- NEW CODE START ---
-      // Check if the AI sent us a Musical Key and Scale, then apply them
-      const aiResponse = newTheme as any; 
-      if (onAiApply && aiResponse.key && aiResponse.scale) {
-          onAiApply(aiResponse.key, aiResponse.scale);
+      
+      // --- FIX: SANITIZE SCALE LOCALLY ---
+      // This protects us if the backend sends "Locrian" or "Major Pentatonic"
+      // We clean it to match 'audioEngine' keys exactly.
+      if (newTheme.scale) {
+          newTheme.scale = newTheme.scale.toLowerCase().trim().replace(/ /g, "_");
+          
+          // Extra safety mapping
+          if (newTheme.scale === 'major_pentatonic') newTheme.scale = 'pentatonic_major';
+          if (newTheme.scale === 'minor_pentatonic') newTheme.scale = 'pentatonic_minor';
       }
-      // --- NEW CODE END ---
+
+      // 2. Clear any manual override
+      // We want the AI's new scale to take effect, so we remove any user overrides.
+      setOverrideScale(""); 
+
+      // 3. Apply the Theme
+      // This sends the Clean Scale, Colors, and BaseFreq to App.tsx in one go.
+      onThemeChange(newTheme);
+
+      // --- REMOVED THE onAiApply BLOCK ---
+      // It was causing a race condition that reverted the theme.
+      
       setShowSynth(true); 
     } catch (err) {
       console.error(err);
@@ -74,7 +86,6 @@ const Controls: React.FC<ControlsProps> = ({
       onThemeChange(updatedTheme);
   };
 
-  // NEW: Handle Root Note (Base Freq) Change
   const handleBaseFreqChange = (value: number) => {
       const updatedTheme = {
           ...currentTheme,
@@ -179,7 +190,6 @@ const Controls: React.FC<ControlsProps> = ({
          {showSynth && (
              <div className="mt-4 space-y-4 p-4 bg-black/40 rounded border border-white/5">
                  
-                 {/* NEW: Root Note (Base Freq) */}
                  <div>
                      <div className="flex justify-between text-[10px] text-white/70 mb-1">
                          <span>BASE PITCH (ROOT)</span>
@@ -193,7 +203,6 @@ const Controls: React.FC<ControlsProps> = ({
                      />
                  </div>
 
-                 {/* Attack / Release */}
                  <div className="space-y-3">
                      <div>
                          <div className="flex justify-between text-[10px] text-white/70 mb-1">
@@ -221,7 +230,6 @@ const Controls: React.FC<ControlsProps> = ({
                      </div>
                  </div>
 
-                 {/* Filter */}
                  <div>
                      <div className="flex justify-between text-[10px] text-white/70 mb-1">
                          <span>BRIGHTNESS (FILTER)</span>
@@ -235,11 +243,9 @@ const Controls: React.FC<ControlsProps> = ({
                      />
                  </div>
 
-                 {/* Vibrato */}
                  <div>
                      <div className="flex justify-between text-[10px] text-white/70 mb-1">
-                         {/* Clarified Label */}
-                         <span>VIBRATO INTENSITY (C BUTTON)</span>
+                         <span>PULSE / TREMOLO (; BUTTON)</span>
                          <span>{currentTheme.synthConfig.vibratoDepth}</span>
                      </div>
                      <input 

@@ -206,37 +206,6 @@ const App: React.FC = () => {
     }, 500);
   };
 
-// --- PASTE THIS INSIDE App component, BEFORE 'if (isInLobby)...' ---
-  const handleAiApply = (newKey: string, newScale: string) => {
-      // 1. Convert Key (e.g., "G") to Freq (196.00)
-      const newBaseFreq = getFreqFromKey(newKey);
-      
-      let safeScale = newScale.toLowerCase().trim().replace(/ /g, "_")
-
-      if (!VALID_SCALES.includes(safeScale)) {
-          console.warn(`AI suggested invalid scale '${safeScale}'. Defaulting to 'pentatonic'.`);
-          
-          // Smart Fallback
-          if (safeScale.includes('minor')) {
-               // specific check if you have 'pentatonic_minor' in your engine
-               safeScale = VALID_SCALES.includes('pentatonic_minor') ? 'pentatonic_minor' : 'minor';
-          } else {
-               safeScale = 'pentatonic';
-          }
-      }
-
-      // 2. Update Local State
-      setOverrideScale(newScale);
-      const updatedTheme = { ...theme, baseFreq: newBaseFreq };
-      setTheme(updatedTheme);
-
-      // 3. Sync to Network
-      if (localUser) {
-          comms.send('SYNC_SCALE', newScale, localUser.id);
-          comms.send('SYNC_THEME', updatedTheme, localUser.id);
-      }
-  };
-
   useEffect(() => {
     if (isInLobby || !localUser) return;
 
@@ -351,9 +320,15 @@ const App: React.FC = () => {
   }, [isInLobby, localUser, theme, effectiveScale, activeChordMode]);
 
 
-  const handleThemeChange = (newTheme: Theme) => {
+const handleThemeChange = (newTheme: Theme) => {
+    // FIX: Only clear the manual scale if the Theme Name has changed.
+    // This allows you to tweak synth knobs (same theme name) without resetting your scale.
+    if (newTheme.name !== theme.name) {
+        setOverrideScale(''); 
+    }
+
     setTheme(newTheme);
-    setOverrideScale(''); 
+    
     if (localUser) {
         comms.send('SYNC_THEME', newTheme, localUser.id);
     }
@@ -396,7 +371,6 @@ const App: React.FC = () => {
         setActiveChordMode={setActiveChordMode}
         overrideScale={overrideScale}
         setOverrideScale={handleScaleChange}
-        onAiApply={handleAiApply} 
       />
 
       {/* Footer / Key Guide */}
@@ -444,7 +418,7 @@ const App: React.FC = () => {
                     {/* VIBRATO (Momentary) */}
                     <div className="flex items-center gap-1">
                         <span className={`w-6 h-6 border flex items-center justify-center rounded text-[10px] transition-colors ${hasVibrato ? 'bg-white/20 border-white text-white' : 'border-white/30 text-white/80'}`}>;</span>
-                        <span className="text-[9px] text-white/60">VIB</span>
+                        <span className="text-[9px] text-white/60">TREM</span>
                     </div>
 
                     {/* REVERB (Toggle) */}

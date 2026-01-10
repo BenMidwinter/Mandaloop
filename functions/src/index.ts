@@ -42,8 +42,8 @@ const themeSchema: Schema = {
         release: { type: SchemaType.NUMBER },
         filterFreq: { type: SchemaType.NUMBER },
         filterQ: { type: SchemaType.NUMBER },
-        vibratoSpeed: { type: SchemaType.NUMBER },
-        vibratoDepth: { type: SchemaType.NUMBER }
+        vibratoSpeed: { type: SchemaType.NUMBER, description: "IGNORE. Set to 0. Speed is now auto-calculated bsaed on depth." },
+        vibratoDepth: { type: SchemaType.NUMBER, description: "TREMOLO INTENSITY (0-30).  Controls both volume dip and speed.  High = Strobe/Helicopter effect.  Low = Gentle Pulse." }
       }
     },
     baseFreq: { type: SchemaType.NUMBER },
@@ -63,7 +63,7 @@ export const generateMandalaTheme = onCall({ secrets: ["GEMINI_API_KEY"] }, asyn
 
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ 
-        model: "gemini-3-flash-preview", // Reverted to stable model (gemini-3 is often experimental)
+        model: "gemini-2.5-flash",
         generationConfig: {
             responseMimeType: "application/json",
             responseSchema: themeSchema
@@ -73,30 +73,107 @@ export const generateMandalaTheme = onCall({ secrets: ["GEMINI_API_KEY"] }, asyn
     try {
         const seedInstruction = seed ? ` Use the seed word "${seed}" to strictly determine the style.` : "";
         
-        // --- UPDATED PROMPT: INJECTING THE MENU ---
+        // --- PROMPT ENGINEERING ---
         const fullPrompt = `
           Create a unique audiovisual theme for a musical mandala app.${seedInstruction} 
           The concept is: "${prompt}". 
-          Make the sound large and textured.
           
-          CRITICAL INSTRUCTION: 
-          The 'scale' field MUST be strictly one of these values: ${VALID_SCALES.join(', ')}.
-          Do not use spaces or capital letters for the scale (e.g. use "pentatonic_minor", not "Pentatonic Minor").
+          VISUAL RULES:
+          - Colors must be NEON and HIGH VISIBILITY. 
+          - Do NOT use black, dark gray, or dark blue.
+          
+          MUSICAL RULES:
+          - The 'scale' field must be exactly one of: ${VALID_SCALES.join(', ')}.
+          - Do NOT invent scales (e.g. do not use "Dominant Phrygian", "Lydian #2").
+          - If you want a dominant sound, pick 'harmonic_minor' or 'phrygian'.
+          - If the user asks for "Locrian", you MUST set scale: "locrian".
         `;
 
         const result = await model.generateContent(fullPrompt);
-        const responseText = result.response.text();
-        const data = JSON.parse(responseText);
+        const data = JSON.parse(result.response.text());
 
-        // --- NEW: THE BOUNCER (Safety Check) ---
-        // Even with instructions, AI sometimes hallucinates. We catch it here.
-        if (!VALID_SCALES.includes(data.scale)) {
-            console.warn(`AI Hallucinated scale: '${data.scale}'. Defaulting to 'pentatonic_minor'.`);
+   // --- STEP 1: SCALE SANITIZATION & TRANSLATION ---
+        let rawScale = data.scale || "";
+        
+        // NEW: "De-Fluffing" - Remove noise words like "mode", "scale"
+        // e.g., "Locrian Mode" -> "locrian"
+        let cleanScale = rawScale.toLowerCase()
+            .replace(" mode", "")
+            .replace(" scale", "")
+            .replace(" key", "")
+            .trim()
+            .replace(/\s+/g, "_");
+
+        // Common AI Hallucination Fixes (Keep existing ones)
+        if (cleanScale.includes('dominant_phrygian')) cleanScale = 'phrygian'; 
+        if (cleanScale.includes('phrygian_dominant')) cleanScale = 'phrygian';
+        if (cleanScale.includes('mixolydian_b6')) cleanScale = 'minor'; 
+        if (cleanScale === 'major_pentatonic') cleanScale = 'pentatonic_major';
+        if (cleanScale === 'minor_pentatonic') cleanScale = 'pentatonic_minor';
+
+        // --- STEP 2: THE BOUNCER ---
+        if (VALID_SCALES.includes(cleanScale)) {
+            data.scale = cleanScale;
+        } else {
+            console.warn(`AI Scale Mismatch: '${rawScale}' -> '${cleanScale}'. Attempting smart fallback.`);
             
-            // Smart Fallback
-            if (data.scale.toLowerCase().includes('minor')) data.scale = 'pentatonic_minor';
-            else if (data.scale.toLowerCase().includes('major')) data.scale = 'pentatonic_major';
-            else data.scale = 'pentatonic_minor';
+            // Fuzzy Matching (Order matters! Complex scales first)
+            if (cleanScale.includes('locrian')) data.scale = 'locrian';
+            else if (cleanScale.includes('harmonic')) data.scale = 'harmonic_minor';
+            else if (cleanScale.includes('dorian')) data.scale = 'dorian';
+            else if (cleanScale.includes('phrygian')) data.scale = 'phrygian';
+            else if (cleanScale.includes('lydian') && !cleanScale.includes('mixo')) data.scale = 'lydian';
+            else if (cleanScale.includes('mixolydian')) data.scale = 'mixolydian';
+            else if (cleanScale.includes('whole')) data.scale = 'whole_tone';
+            else if (cleanScale.includes('chromatic')) data.scale = 'chromatic';
+            else if (cleanScale.includes('pelog')) data.scale = 'pelog';
+            else if (cleanScale.includes('hirajoshi')) data.scale = 'hirajoshi';
+            else if (cleanScale.includes('minor')) data.scale = 'pentatonic_minor';
+            else if (cleanScale.includes('major')) data.scale = 'pentatonic_major';
+            else {
+                // If it fails completely, try to rescue it based on the description
+                const desc = (data.explanation || "").toLowerCase();
+                if (desc.includes('locrian')) data.scale = 'locrian';
+                else if (desc.includes('dreamy')) data.scale = 'whole_tone';
+                else if (desc.includes('middle east')) data.scale = 'harmonic_minor';
+                else data.scale = 'pentatonic_minor'; // Ultimate fallback
+            }
+        }
+
+        // --- STEP 3: COLOR BOOSTER (Fixing "Too Dark") ---
+        // This ensures every color has at least 50% lightness
+        if (data.colors && Array.isArray(data.colors)) {
+            data.colors = data.colors.map((hex: string) => {
+                // Basic Hex to RGB
+                let r = 0, g = 0, b = 0;
+                if (hex.length === 4) {
+                    r = parseInt("0x" + hex[1] + hex[1]);
+                    g = parseInt("0x" + hex[2] + hex[2]);
+                    b = parseInt("0x" + hex[3] + hex[3]);
+                } else if (hex.length === 7) {
+                    r = parseInt("0x" + hex[1] + hex[2]);
+                    g = parseInt("0x" + hex[3] + hex[4]);
+                    b = parseInt("0x" + hex[5] + hex[6]);
+                }
+                
+                // RGB to HSL Lightness check
+                const max = Math.max(r, g, b) / 255;
+                const min = Math.min(r, g, b) / 255;
+                let l = (max + min) / 2;
+
+                // If too dark (Lightness < 0.5), boost it
+                if (l < 0.5) {
+                    // Simple brighten: blend with white
+                    const boost = 0.5; // 50% lighter
+                    r = Math.floor(Math.min(255, r + (255 - r) * boost));
+                    g = Math.floor(Math.min(255, g + (255 - g) * boost));
+                    b = Math.floor(Math.min(255, b + (255 - b) * boost));
+                    
+                    // Convert back to Hex
+                    return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+                }
+                return hex;
+            });
         }
 
         return data;
