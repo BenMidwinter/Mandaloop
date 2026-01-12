@@ -163,38 +163,45 @@ export const generateMandalaTheme = onCall({ secrets: ["GEMINI_API_KEY"] }, asyn
             data.scale = 'pentatonic_major';
         }
 
-        // --- STEP 3: COLOR BOOSTER (Fixing "Too Dark") ---
-        // This ensures every color has at least 50% lightness
+        // --- STEP 3: COLOR BOOSTER (The "Muted" Friendly Version) ---
         if (data.colors && Array.isArray(data.colors)) {
             data.colors = data.colors.map((hex: string) => {
-                // Basic Hex to RGB
+                // 1. SANITY CHECK: If hex is broken, return Grey (NOT White)
+                if (!hex || typeof hex !== 'string' || !/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)) {
+                    return '#808080'; // Middle Grey fallback prevents the "White Flash"
+                }
+
+                // 2. ROBUST PARSING (Handle 3-digit and 6-digit safely)
                 let r = 0, g = 0, b = 0;
                 if (hex.length === 4) {
-                    r = parseInt("0x" + hex[1] + hex[1]);
-                    g = parseInt("0x" + hex[2] + hex[2]);
-                    b = parseInt("0x" + hex[3] + hex[3]);
-                } else if (hex.length === 7) {
-                    r = parseInt("0x" + hex[1] + hex[2]);
-                    g = parseInt("0x" + hex[3] + hex[4]);
-                    b = parseInt("0x" + hex[5] + hex[6]);
+                    r = parseInt(hex[1] + hex[1], 16);
+                    g = parseInt(hex[2] + hex[2], 16);
+                    b = parseInt(hex[3] + hex[3], 16);
+                } else {
+                    r = parseInt(hex.substring(1, 3), 16);
+                    g = parseInt(hex.substring(3, 5), 16);
+                    b = parseInt(hex.substring(5, 7), 16);
                 }
-                
-                // RGB to HSL Lightness check
-                const max = Math.max(r, g, b) / 255;
-                const min = Math.min(r, g, b) / 255;
-                let l = (max + min) / 2;
 
-                // If too dark (Lightness < 0.5), boost it
-                if (l < 0.5) {
-                    // Simple brighten: blend with white
-                    const boost = 0.5; // 50% lighter
-                    r = Math.floor(Math.min(255, r + (255 - r) * boost));
-                    g = Math.floor(Math.min(255, g + (255 - g) * boost));
-                    b = Math.floor(Math.min(255, b + (255 - b) * boost));
+                // 3. LUMA CALCULATION (How the human eye actually sees brightness)
+                // 0.0 is Pitch Black, 1.0 is Pure White.
+                const luma = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+                // 4. THE FIX: LOWER THRESHOLD & GENTLE BOOST
+                // Old code: l < 0.5 (Boosted everything).
+                // New code: luma < 0.15 (Only boosts invisible/black colors).
+                // Muted colors (0.2 - 0.4) are now allowed to pass through untouched.
+                if (luma < 0.15) {
+                    const boost = 0.3; // Gentle 30% lift, not 50%
                     
-                    // Convert back to Hex
+                    r = Math.min(255, Math.floor(r + (255 - r) * boost));
+                    g = Math.min(255, Math.floor(g + (255 - g) * boost));
+                    b = Math.min(255, Math.floor(b + (255 - b) * boost));
+                    
+                    // Reconstruct Hex
                     return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
                 }
+
                 return hex;
             });
         }
