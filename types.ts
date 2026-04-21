@@ -41,7 +41,7 @@ export interface NotePayload {
 }
 
 // Added SYNC_SCALE to the list
-export type MessageType = 'JOIN' | 'LEAVE' | 'NOTE_ON' | 'NOTE_OFF' | 'EFFECT_CHANGE' | 'SYNC_THEME' | 'SYNC_SCALE';
+export type MessageType = 'JOIN' | 'LEAVE' | 'NOTE_ON' | 'NOTE_OFF' | 'EFFECT_CHANGE' | 'SYNC_THEME' | 'SYNC_SCALE' | 'PING' | 'PONG';
 
 export interface SignalMessage {
   type: MessageType;

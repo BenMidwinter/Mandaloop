@@ -8,12 +8,8 @@ interface ControlsProps {
   onRemoveUser: () => void;
   onThemeChange: (theme: Theme) => void;
   currentTheme: Theme;
-  
-  // --- NEW: Receive the Locked Function ---
   onGenerate: (prompt: string) => Promise<void>;
   isGenerating: boolean;
-  // Note: We removed setIsGenerating setter. App.tsx controls the state now.
-
   roomCode: string;
   setRoomCode: (code: string) => void;
   activeChordMode: string;
@@ -26,7 +22,7 @@ const Controls: React.FC<ControlsProps> = ({
   userCount,
   onThemeChange,
   currentTheme,
-  onGenerate, // <--- Use this instead of fetching directly
+  onGenerate, 
   isGenerating,
   roomCode,
   activeChordMode,
@@ -42,16 +38,10 @@ const Controls: React.FC<ControlsProps> = ({
     e.preventDefault();
     if (isGenerating) return;
 
-    // 1. Prepare the prompt
     const finalPrompt = prompt.trim() || roomCode || "Cosmic Geometry";
-
-    // 2. Clear manual overrides so the new theme shines through
     setOverrideScale(""); 
-    
-    // 3. Call the Parent (App.tsx) to handle the API call + Locking
     await onGenerate(finalPrompt);
     
-    // 4. Cleanup UI
     setPrompt('');
     setShowSynth(true); 
   };
@@ -75,7 +65,41 @@ const Controls: React.FC<ControlsProps> = ({
       onThemeChange(updatedTheme);
   };
 
-  // --- UI RENDER (Unchanged from your version) ---
+  // --- NEW: Hz to Note Math ---
+  const getNoteData = (freq: number) => {
+      // FIX: Added centsOffset: 0 so TypeScript knows it will always exist
+      if (!freq || freq <= 0) return { display: '', colorClass: '', centsOffset: 0 };
+      
+      const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      
+      // Calculate MIDI note
+      const midiFloat = 69 + 12 * Math.log2(freq / 440);
+      const midiRounded = Math.round(midiFloat);
+      
+      // Calculate the exact frequency of that rounded note to find the difference
+      const exactFreq = 440 * Math.pow(2, (midiRounded - 69) / 12);
+      
+      // Calculate cents (100 cents = 1 semitone)
+      const cents = 1200 * Math.log2(freq / exactFreq);
+      
+      const noteIndex = midiRounded % 12;
+      const octave = Math.floor(midiRounded / 12) - 1;
+      const noteName = `${noteNames[noteIndex >= 0 ? noteIndex : noteIndex + 12]}${octave}`;
+      
+      // Color logic based on tuning margin
+      let colorClass = 'text-green-400'; // In tune (+/- 10 cents margin)
+      if (cents < -10) colorClass = 'text-red-400'; // Flat
+      else if (cents > 10) colorClass = 'text-blue-400'; // Sharp
+      
+      return { 
+          display: `(${noteName})`, 
+          colorClass,
+          centsOffset: Math.round(cents)
+      };
+  };
+
+  const noteData = getNoteData(currentTheme.baseFreq);
+
   if (!isOpen) {
     return (
       <button 
@@ -175,7 +199,16 @@ const Controls: React.FC<ControlsProps> = ({
                  <div>
                      <div className="flex justify-between text-[10px] text-white/70 mb-1">
                          <span>BASE PITCH (ROOT)</span>
-                         <span>{Math.round(currentTheme.baseFreq)}Hz</span>
+                         <div className="flex gap-1 items-center">
+                            <span>{Math.round(currentTheme.baseFreq)}Hz</span>
+                            {/* NEW: Dynamic Note and Color Display */}
+                            <span 
+                                className={noteData.colorClass} 
+                                title={`${noteData.centsOffset > 0 ? '+' : ''}${noteData.centsOffset} cents`}
+                            >
+                                {noteData.display}
+                            </span>
+                         </div>
                      </div>
                      <input 
                          type="range" min="50" max="400" step="5"
