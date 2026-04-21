@@ -250,14 +250,25 @@ const App: React.FC = () => {
       }
 
       case 'SYNC_THEME': 
+        // --- NEW: Log the remote user's fine-tuning and theme changes ---
+        logEvent(msg.senderId, senderName, 'THEME_CHANGED', { 
+            themeName: msg.payload.name, 
+            scale: msg.payload.scale,
+            baseFrequencyHz: msg.payload.baseFreq,
+            ...msg.payload.synthConfig 
+        });
+        
         setTheme(msg.payload);
         setOverrideScale(''); 
         break;
 
       case 'SYNC_SCALE':
+        // --- NEW: Log the remote user's scale overrides ---
+        logEvent(msg.senderId, senderName, 'SCALE_OVERRIDDEN', { scale: msg.payload });
+        
         setOverrideScale(msg.payload);
         break;
-    }
+      }
   }, [theme, effectiveScale, remoteUsers, logEvent]);
 
   useEffect(() => {
